@@ -1,0 +1,6 @@
+logs/
+training/
+checkpoints/
+data/
+weights/
+**/__pycache__/

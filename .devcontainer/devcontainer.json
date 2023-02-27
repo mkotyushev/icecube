@@ -1,0 +1,17 @@
+// More info: https://containers.dev/implementors/json_reference/
+{
+	"image": "nvidia/cuda:11.7.0-devel-ubuntu22.04",
+	"features": {},
+	"customizations": {
+		"vscode": {
+			"extensions": [
+			]
+		}
+	},
+	"runArgs": [
+		"--gpus",
+		"all",
+		"--shm-size",
+		"1gb"
+	]
+}

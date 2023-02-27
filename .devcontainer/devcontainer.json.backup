@@ -1,0 +1,17 @@
+// More info: https://containers.dev/implementors/json_reference/
+{
+	"build": { "dockerfile": "Dockerfile" },
+	"features": {},
+	"customizations": {
+		"vscode": {
+			"extensions": [
+			]
+		}
+	},
+	"runArgs": [
+		"--gpus",
+		"all",
+		"--shm-size",
+		"1gb"
+	]
+}
