@@ -3,3 +3,4 @@
 	url = git@github.com:mkotyushev/otfusion.git
 [submodule "graphnet"]
 	path = graphnet
+	url = git@github.com:mkotyushev/graphnet.git
