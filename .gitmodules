@@ -1,0 +1,5 @@
+[submodule "otfusion"]
+	path = otfusion
+	url = git@github.com:mkotyushev/otfusion.git
+[submodule "graphnet"]
+	path = graphnet
