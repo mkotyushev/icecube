@@ -26,11 +26,14 @@ ENV PYTHONPATH=$PYTHONPATH:/workspaces/icecube/otfusion/cifar
 WORKDIR /workspaces/icecube
 RUN \
     conda create --name graphnet python=3.8 gcc_linux-64 gxx_linux-64 libgcc cudatoolkit=11.7 -c conda-forge -y
-RUN /root/miniconda3/bin/pip install --find-links https://download.pytorch.org/whl/torch_stable.html torch==1.13+cu117 && \
-    /root/miniconda3/bin/pip install \
+RUN /root/miniconda3/bin/pip install --find-links https://download.pytorch.org/whl/torch_stable.html torch==1.13+cu117
+RUN /root/miniconda3/bin/pip install \
         torch-cluster==1.6.0 \
         torch_scatter==2.0.9 \
         torch-sparse==0.6.13 \
         torch_geometric==2.0.4 \
-        POT==0.8.2 && \
-    /root/miniconda3/bin/pip install -i https://download.pytorch.org/whl/cu117 torchvision==0.14.0+cu117
+        POT==0.8.2
+# Workarnound for torchvision's pillow dependency resolving issue
+RUN /root/miniconda3/bin/python -m pip install --upgrade pip
+RUN /root/miniconda3/bin/python -m pip install --upgrade pillow
+RUN /root/miniconda3/bin/pip install -i https://download.pytorch.org/whl/cu117 torchvision==0.14.0+cu117
