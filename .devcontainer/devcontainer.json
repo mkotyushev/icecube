@@ -1,6 +1,6 @@
 // More info: https://containers.dev/implementors/json_reference/
 {
-	"image": "nvidia/cuda:11.7.0-devel-ubuntu22.04",
+	"build": { "dockerfile": "Dockerfile" },
 	"features": {},
 	"customizations": {
 		"vscode": {
