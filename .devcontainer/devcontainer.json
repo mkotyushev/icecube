@@ -1,17 +1,17 @@
 // More info: https://containers.dev/implementors/json_reference/
 {
-	"build": { "dockerfile": "Dockerfile" },
-	"features": {},
+	"dockerComposeFile": "../docker-compose.yml",
+	
+	"service": "dev",
+	"workspaceFolder": "/workspace/icecube",
 	"customizations": {
 		"vscode": {
 			"extensions": [
+				"eamodio.gitlens",
+				"GitHub.copilot",
+				"ms-python.python",
+				"ms-toolsai.jupyter"
 			]
 		}
-	},
-	"runArgs": [
-		"--gpus",
-		"all",
-		"--shm-size",
-		"1gb"
-	]
+	}
 }

@@ -22,18 +22,21 @@ ENV PYTHONPATH=$PYTHONPATH:/workspaces/icecube/graphnet/src
 ENV PYTHONPATH=$PYTHONPATH:/workspaces/icecube/otfusion
 ENV PYTHONPATH=$PYTHONPATH:/workspaces/icecube/otfusion/cifar
 
-# Install Python packages: torch first due to some dependencies importing torch during install
-WORKDIR /workspaces/icecube
+# Install torch & other related deps: 
+# - torch first due to some dependencies importing torch during install
+RUN conda init bash
 RUN \
     conda create --name graphnet python=3.8 gcc_linux-64 gxx_linux-64 libgcc cudatoolkit=11.7 -c conda-forge -y
-RUN /root/miniconda3/bin/pip install --find-links https://download.pytorch.org/whl/torch_stable.html torch==1.13+cu117
-RUN /root/miniconda3/bin/pip install \
-        torch-cluster==1.6.0 \
-        torch_scatter==2.0.9 \
-        torch-sparse==0.6.13 \
-        torch_geometric==2.0.4 \
-        POT==0.8.2
-# Workarnound for torchvision's pillow dependency resolving issue
-RUN /root/miniconda3/bin/python -m pip install --upgrade pip
-RUN /root/miniconda3/bin/python -m pip install --upgrade pillow
-RUN /root/miniconda3/bin/pip install -i https://download.pytorch.org/whl/cu117 torchvision==0.14.0+cu117
+RUN /root/miniconda3/envs/graphnet/bin/python -m pip install --upgrade pip
+
+RUN /root/miniconda3/envs/graphnet/bin/pip install --default-timeout=1000 --extra-index-url https://download.pytorch.org/whl/cu117 torch==1.13+cu117 torchvision==0.14.0+cu117
+COPY ../requirements.txt .
+RUN /root/miniconda3/envs/graphnet/bin/pip install --default-timeout=1000 -r requirements.txt 
+RUN /root/miniconda3/envs/graphnet/bin/pip install matplotlib
+
+ENV PYTHONPATH=/workspace/icecube/lib/graphnet/src:$PYTHONPATH
+ENV PYTHONPATH=/workspace/icecube/lib/otfusion:$PYTHONPATH
+ENV PYTHONPATH=/workspace/icecube/lib/otfusion/cifar:$PYTHONPATH
+ENV PATH=/workspace/icecube/lib/graphnet/src:$PATH
+ENV PATH=/workspace/icecube/lib/otfusion:$PATH
+ENV PATH=/workspace/icecube/lib/otfusion/cifar:$PATH

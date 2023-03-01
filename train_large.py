@@ -22,15 +22,15 @@ features = FEATURES.KAGGLE
 truth = TRUTH.KAGGLE
 
 config = {
-        "path": '/workspaces/icecube3/batch_1.db',
-        "inference_database_path": '/workspaces/icecube3/batch_51.db',
+        "path": '/workspace/icecube/data/batch_1.db',
+        "inference_database_path": '/workspace/icecube/data/batch_51.db',
         "pulsemap": 'pulse_table',
         "truth_table": 'meta_table',
         "features": features,
         "truth": truth,
         "index_column": 'event_id',
         "run_name_tag": 'my_example',
-        "batch_size": 200,
+        "batch_size": 30,
         "num_workers": 6,
         "target": 'direction',
         "early_stopping_patience": 5,
@@ -40,8 +40,8 @@ config = {
             "gpus": [0],
             "distribution_strategy": None,
         },
-        'train_selection': '/workspaces/icecube3/train_selection_max_200_pulses.csv',
-        'validate_selection': '/workspaces/icecube3/validate_selection_max_200_pulses.csv',
+        'train_selection': '/workspace/icecube/data/train_selection_max_200_pulses.csv',
+        'validate_selection': '/workspace/icecube/data/validate_selection_max_200_pulses.csv',
         'test_selection': None,
         'base_dir': 'training',
         'dynedge': {
@@ -54,5 +54,5 @@ if __name__ == '__main__':
     seed_everything(0)
     model = train_dynedge_from_scratch(config=config)
 
-    model.save('dynedge_pretrained_large/model.pth')
-    model.save_state_dict('dynedge_pretrained_large/state_dict.pth')
+    model.save('weights/dynedge_pretrained_large/model.pth')
+    model.save_state_dict('weights/dynedge_pretrained_large/state_dict.pth')
