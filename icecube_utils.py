@@ -53,6 +53,7 @@ def build_model(config: Dict[str,Any], train_dataloader: Any) -> StandardModel:
     gnn = DynEdge(
         nb_inputs=detector.nb_outputs,
         global_pooling_schemes=["min", "max", "mean"],
+        bias=False,
         **config['dynedge']
     )
 
@@ -61,6 +62,7 @@ def build_model(config: Dict[str,Any], train_dataloader: Any) -> StandardModel:
             hidden_size=gnn.nb_outputs,
             target_labels=config["target"],
             loss_function=VonMisesFisher3DLoss(),
+            bias=False
         )
         prediction_columns = [config["target"] + "_x", 
                               config["target"] + "_y", 
@@ -281,7 +283,7 @@ def compute_activations_across_models_v1(args, models, train_loader, num_samples
         cfg_idx = 0
         for lnum, layer in enumerate(activations[idx]):
             print('***********')
-            activations[idx][layer] = torch.stack(activations[idx][layer])
+            activations[idx][layer] = torch.concatenate(activations[idx][layer], dim=0)
             print("min of act: {}, max: {}, mean: {}".format(torch.min(activations[idx][layer]), torch.max(activations[idx][layer]), torch.mean(activations[idx][layer])))
             # assert (activations[idx][layer] >= 0).all()
 
@@ -472,6 +474,7 @@ def get_acts_wassersteinized_layers_modularized(
         mu_cardinality = fc_layer0_weight.shape[0]
         nu_cardinality = fc_layer1_weight.shape[0]
 
+        torch.cuda.empty_cache()
         get_activation_distance_stats(activations_0, activations_1, layer0_name)
 
         layer0_shape = fc_layer0_weight.shape
@@ -540,7 +543,7 @@ def get_acts_wassersteinized_layers_modularized(
                     else:
                         postproc_T_vars = \
                             [torch.eye(input_dim).cuda()] + \
-                            [x for name, x in T_vars.items() if '2.bias' in name]
+                            [x for name, x in T_vars.items() if '2.weight' in name]
                         if fc_layer0_weight_data.shape[1] == sum(x.shape[0] for x in postproc_T_vars):
                             # Handles cat connections of DynEdge cat of conv layers: 
                             # input layer + 4 T_var's of conv layers' biases
