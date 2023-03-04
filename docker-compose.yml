@@ -7,11 +7,14 @@ services:
     build:
       context: .
       dockerfile: .devcontainer/Dockerfile
-      shm_size: '2gb'
       ssh:
         - default
+    shm_size: '2gb'
+    environment:
+      - SSH_AUTH_SOCK:${SSH_AUTH_SOCK}
     volumes:
       - .:/workspace/icecube:cached
+      - $SSH_AUTH_SOCK:${SSH_AUTH_SOCK}
     command: /bin/sh -c "while sleep 1000; do :; done"
     deploy:
       resources:
