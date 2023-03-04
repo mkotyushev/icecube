@@ -1,8 +1,10 @@
-from collections import OrderedDict
+
+import numpy as np
 import pandas as pd
 import os
 import torch
-
+from collections import OrderedDict
+from copy import deepcopy
 from typing import Any, Dict, List
 from pytorch_lightning.callbacks import EarlyStopping
 from torch.optim.adam import Adam
@@ -137,7 +139,7 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
                                             )
     return train_dataloader, validate_dataloader
 
-def train_dynedge_from_scratch(config: Dict[str, Any]) -> StandardModel:
+def train_dynedge_from_scratch(config: Dict[str, Any], state_dict_path=None) -> StandardModel:
     """Builds and trains GNN according to config."""
     logger.info(f"features: {config['features']}")
     logger.info(f"truth: {config['truth']}")
@@ -147,7 +149,10 @@ def train_dynedge_from_scratch(config: Dict[str, Any]) -> StandardModel:
 
     train_dataloader, validate_dataloader = make_dataloaders(config = config)
 
-    model = build_model(config, train_dataloader)
+    if state_dict_path is None:
+        model = build_model(config, train_dataloader)
+    else:
+        model = load_pretrained_model(config, state_dict_path)
 
     # Training model
     callbacks = [
@@ -716,3 +721,59 @@ def get_acts_wassersteinized_layers_modularized(
 
         idx += 1
     return avg_aligned_layers, aligned_layers, T_vars
+
+
+layer_names = {
+    '_gnn._conv_layers.0.nn.0',
+    '_gnn._conv_layers.0.nn.2',
+    '_gnn._conv_layers.1.nn.0',
+    '_gnn._conv_layers.1.nn.2',
+    '_gnn._conv_layers.2.nn.0',
+    '_gnn._conv_layers.2.nn.2',
+    '_gnn._conv_layers.3.nn.0',
+    '_gnn._conv_layers.3.nn.2',
+    '_gnn._post_processing.0',
+    '_gnn._post_processing.2',
+    '_gnn._readout.0',
+    '_tasks.0._affine',
+}
+
+
+def map_model(args, model_from, model_to, dataloader, n_samples):
+    models = [
+        model_from.cuda(),
+        model_to.cuda(), 
+    ]
+    with torch.no_grad():
+        activations = compute_activations_across_models_v1(
+            args, 
+            models,
+            dataloader,
+            n_samples,
+            mode='raw',
+            layer_names=layer_names
+        )
+        _, mapped_state_dict, _ = get_acts_wassersteinized_layers_modularized(args, models, activations, train_loader=train_dataloader, test_loader=None)
+        
+    mapped_state_dict = {
+        k: v[:, 0] if 'bias' in k else v for k, v in mapped_state_dict.items()
+    }
+
+    model_mapped = deepcopy(model_to)
+    model_mapped.load_state_dict(mapped_state_dict)
+
+    return model_mapped
+
+
+def convert_to_3d(df: pd.DataFrame) -> pd.DataFrame:
+    """Converts zenith and azimuth to 3D direction vectors"""
+    df['true_x'] = np.cos(df['azimuth']) * np.sin(df['zenith'])
+    df['true_y'] = np.sin(df['azimuth']) * np.sin(df['zenith'])
+    df['true_z'] = np.cos(df['zenith'])
+    return df
+
+
+def calculate_angular_error(df : pd.DataFrame) -> pd.DataFrame:
+    """Calcualtes the opening angle (angular error) between true and reconstructed direction vectors"""
+    df['angular_error'] = np.arccos(df['true_x']*df['direction_x'] + df['true_y']*df['direction_y'] + df['true_z']*df['direction_z'])
+    return df

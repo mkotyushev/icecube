@@ -4,6 +4,7 @@ import random, os
 import numpy as np
 import torch
 from graphnet.data.constants import FEATURES, TRUTH
+from pathlib import Path
 
 from icecube_utils import (
     train_dynedge_from_scratch
@@ -12,7 +13,10 @@ from icecube_utils import (
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('model_type', type=str, choices=['large', 'small'])
+    parser.add_argument('--state-dict-path', type=Path, default=None)
+    parser.add_argument('--model-save-dir', type=Path, default=None)
+    parser.add_argument('--max-epochs', type=int, default=10)
+    parser.add_argument('--size-multiplier', type=int, default=1)
     parser.add_argument('--seed', type=int, default=0)
     args = parser.parse_args()
     return args
@@ -61,11 +65,12 @@ if __name__ == '__main__':
     args = parse_args()
     seed_everything(args.seed)
 
-    if args.model_type == 'large':
-        config['dynedge']['dynedge_layer_sizes'] = [(128 * 2, 256 * 2), (336 * 2, 256 * 2), (336 * 2, 256 * 2), (336 * 2, 256 * 2)]
-    elif args.model_type == 'small':
-        config['dynedge']['dynedge_layer_sizes'] = [(128, 256), (336, 256), (336, 256), (336, 256)]
-    model = train_dynedge_from_scratch(config=config)
+    config['fit']['max_epochs'] = args.max_epochs
+    config['dynedge']['dynedge_layer_sizes'] = [
+        (x * args.size_multiplier, y * args.size_multiplier) 
+        for x, y in [(128, 256), (336, 256), (336, 256), (336, 256)]
+    ]
+    model = train_dynedge_from_scratch(config=config, state_dict_path=str(args.state_dict_path))
 
-    model.save(f'weights/dynedge_pretrained_{args.model_type}_{args.seed}/model.pth')
-    model.save_state_dict(f'weights/dynedge_pretrained_{args.model_type}_{args.seed}/state_dict.pth')
+    model.save(args.model_save_dir / 'model.pth')
+    model.save_state_dict(args.model_save_dir / 'state_dict.pth')
