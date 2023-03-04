@@ -3,4 +3,5 @@ training/
 checkpoints/
 data/
 weights/
+results/
 __pycache__/
