@@ -641,6 +641,12 @@ def get_acts_wassersteinized_layers_modularized(
 
         T_var, marginals = _compute_marginals(args, T_var, device, eps=eps)
 
+        scale = fc_layer0_weight_data.shape[1] / fc_layer1_weight_data.shape[1]
+        if not (idx == 0 or idx == (num_layers - 1)):
+            scale = scale ** 0.5
+        print('scale is ', scale)
+        T_var = T_var * scale
+
         T_vars[layer0_name] = T_var
 
         if args.debug:
