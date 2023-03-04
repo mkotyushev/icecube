@@ -1,3 +1,4 @@
+import argparse
 import torch
 import random, os
 import numpy as np
@@ -7,6 +8,15 @@ from graphnet.data.constants import FEATURES, TRUTH
 from icecube_utils import (
     train_dynedge_from_scratch
 )
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('model_type', type=str, choices=['large', 'small'])
+    parser.add_argument('--seed', type=int, default=0)
+    args = parser.parse_args()
+    return args
+
 
 def seed_everything(seed: int):    
     random.seed(seed)
@@ -30,13 +40,12 @@ config = {
         "truth": truth,
         "index_column": 'event_id',
         "run_name_tag": 'my_example',
-        "batch_size": 30,
+        "batch_size": 100,
         "num_workers": 6,
         "target": 'direction',
         "early_stopping_patience": 5,
         "fit": {
-            "max_epochs": 1,
-            # 'max_steps': 0,
+            "max_epochs": 10,
             "gpus": [0],
             "distribution_strategy": None,
         },
@@ -44,15 +53,19 @@ config = {
         'validate_selection': '/workspace/icecube/data/validate_selection_max_200_pulses.csv',
         'test_selection': None,
         'base_dir': 'training',
-        'dynedge': {
-                'dynedge_layer_sizes': [(128 * 2, 256 * 2), (336 * 2, 256 * 2), (336 * 2, 256 * 2), (336 * 2, 256 * 2)]
-        }
+        'dynedge': {}
 }
 
 
 if __name__ == '__main__':
-    seed_everything(0)
+    args = parse_args()
+    seed_everything(args.seed)
+
+    if args.model_type == 'large':
+        config['dynedge']['dynedge_layer_sizes'] = [(128 * 2, 256 * 2), (336 * 2, 256 * 2), (336 * 2, 256 * 2), (336 * 2, 256 * 2)]
+    elif args.model_type == 'small':
+        config['dynedge']['dynedge_layer_sizes'] = [(128, 256), (336, 256), (336, 256), (336, 256)]
     model = train_dynedge_from_scratch(config=config)
 
-    model.save('weights/dynedge_pretrained_large/model.pth')
-    model.save_state_dict('weights/dynedge_pretrained_large/state_dict.pth')
+    model.save(f'weights/dynedge_pretrained_{args.model_type}_{args.seed}/model.pth')
+    model.save_state_dict(f'weights/dynedge_pretrained_{args.model_type}_{args.seed}/state_dict.pth')
