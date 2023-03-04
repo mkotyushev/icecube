@@ -1,5 +1,6 @@
 import pandas as pd
 import os
+import torch
 from typing import Any, Dict, List
 
 from pytorch_lightning.callbacks import EarlyStopping
@@ -160,12 +161,13 @@ def inference(model, config: Dict[str, Any]) -> pd.DataFrame:
                                             )
     
     # Get predictions
-    results = model.predict_as_dataframe(
-        gpus = [0],
-        dataloader = test_dataloader,
-        prediction_columns=model.prediction_columns,
-        additional_attributes=model.additional_attributes,
-    )
+    with torch.no_grad():
+        results = model.predict_as_dataframe(
+            gpus = [0],
+            dataloader = test_dataloader,
+            prediction_columns=model.prediction_columns,
+            additional_attributes=model.additional_attributes,
+        )
     # Save predictions and model to file
     archive = os.path.join(config['base_dir'], "train_model_without_configs")
     run_name = f"dynedge_{config['target']}_{config['run_name_tag']}"
