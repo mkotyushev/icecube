@@ -6,7 +6,7 @@ import torch
 from collections import OrderedDict
 from copy import deepcopy
 from typing import Any, Dict, List
-from pytorch_lightning.callbacks import EarlyStopping
+from pytorch_lightning.callbacks import EarlyStopping, GradientAccumulationScheduler
 from torch.optim.adam import Adam
 from graphnet.data.constants import FEATURES, TRUTH
 from graphnet.models import StandardModel
@@ -55,7 +55,7 @@ def build_model(config: Dict[str,Any], train_dataloader: Any) -> StandardModel:
     gnn = DynEdge(
         nb_inputs=detector.nb_outputs,
         global_pooling_schemes=["min", "max", "mean"],
-        bias=False,
+        bias=config['bias'],
         **config['dynedge']
     )
 
@@ -64,7 +64,7 @@ def build_model(config: Dict[str,Any], train_dataloader: Any) -> StandardModel:
             hidden_size=gnn.nb_outputs,
             target_labels=config["target"],
             loss_function=VonMisesFisher3DLoss(),
-            bias=False
+            bias=config['bias']
         )
         prediction_columns = [config["target"] + "_x", 
                               config["target"] + "_y", 
@@ -96,7 +96,11 @@ def build_model(config: Dict[str,Any], train_dataloader: Any) -> StandardModel:
     
     return model
 
-def load_pretrained_model(config: Dict[str,Any], state_dict_path: str = '/kaggle/input/dynedge-pretrained/dynedge_pretrained_batch_1_to_50/state_dict.pth') -> StandardModel:
+def load_pretrained_model(
+    config: Dict[str,Any], 
+    state_dict_path: str = '/kaggle/input/dynedge-pretrained/dynedge_pretrained_batch_1_to_50/state_dict.pth',
+    return_train_dataloader: bool = False
+) -> StandardModel:
     train_dataloader, _ = make_dataloaders(config = config)
     model = build_model(config = config, 
                         train_dataloader = train_dataloader)
@@ -107,7 +111,11 @@ def load_pretrained_model(config: Dict[str,Any], state_dict_path: str = '/kaggle
                               config["target"] + "_z", 
                               config["target"] + "_kappa" ]
     model.additional_attributes = ['zenith', 'azimuth', 'event_id']
-    return model
+
+    if return_train_dataloader:
+        return model, train_dataloader
+    else:
+        return model
 
 def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
     """Constructs training and validation dataloaders for training with early stopping."""
@@ -156,6 +164,9 @@ def train_dynedge_from_scratch(config: Dict[str, Any], state_dict_path=None) -> 
 
     # Training model
     callbacks = [
+        GradientAccumulationScheduler(
+            scheduling={0: config['accumulate_grad_batches']}
+        ),
         EarlyStopping(
             monitor="val_loss",
             patience=config["early_stopping_patience"],
@@ -283,7 +294,7 @@ def compute_activations_across_models_v1(args, models, train_loader, num_samples
     # Combine the activations generated across the number of samples to form importance scores
     # The importance calculated is based on the 'mode' flag: which is either of 'mean', 'std', 'meanstd'
 
-    model_cfg = myutils.get_model_layers_cfg(args.model_name)
+    # model_cfg = myutils.get_model_layers_cfg(args.model_name)
     for idx in range(len(models)):
         cfg_idx = 0
         for lnum, layer in enumerate(activations[idx]):
@@ -310,19 +321,19 @@ def compute_activations_across_models_v1(args, models, train_loader, num_samples
 
                 activations[idx][layer] = activations[idx][layer].squeeze(1)
 
-                # apply maxpool wherever the next thing in config list is 'M'
-                if (cfg_idx + 1) < len(model_cfg):
-                    if model_cfg[cfg_idx+1] == 'M':
-                        print("applying maxpool ---------------")
-                        activations[idx][layer] = maxpool(activations[idx][layer])
-                        cfg_idx += 2
-                    else:
-                        cfg_idx += 1
+                # # apply maxpool wherever the next thing in config list is 'M'
+                # if (cfg_idx + 1) < len(model_cfg):
+                #     if model_cfg[cfg_idx+1] == 'M':
+                #         print("applying maxpool ---------------")
+                #         activations[idx][layer] = maxpool(activations[idx][layer])
+                #         cfg_idx += 2
+                #     else:
+                #         cfg_idx += 1
 
-                # apply avgpool only for the last layer
-                if cfg_idx == len(model_cfg):
-                    print("applying avgpool ---------------")
-                    activations[idx][layer] = avgpool(activations[idx][layer])
+                # # apply avgpool only for the last layer
+                # if cfg_idx == len(model_cfg):
+                #     print("applying avgpool ---------------")
+                #     activations[idx][layer] = avgpool(activations[idx][layer])
 
                 # unsqueeze back at axis 1
                 activations[idx][layer] = activations[idx][layer].unsqueeze(1)
@@ -753,7 +764,8 @@ def map_model(args, model_from, model_to, dataloader, n_samples):
             mode='raw',
             layer_names=layer_names
         )
-        _, mapped_state_dict, _ = get_acts_wassersteinized_layers_modularized(args, models, activations, train_loader=train_dataloader, test_loader=None)
+        _, mapped_state_dict, _ = get_acts_wassersteinized_layers_modularized(
+            args, models, activations, train_loader=dataloader, test_loader=None)
         
     mapped_state_dict = {
         k: v[:, 0] if 'bias' in k else v for k, v in mapped_state_dict.items()
