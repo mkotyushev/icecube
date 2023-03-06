@@ -17,6 +17,8 @@ def parse_args():
     parser.add_argument('--model-save-dir', type=Path, default=None)
     parser.add_argument('--max-epochs', type=int, default=10)
     parser.add_argument('--size-multiplier', type=int, default=1)
+    parser.add_argument('--batch-size', type=int, default=100)
+    parser.add_argument('--accumulate-grad-batches', type=int, default=1)
     parser.add_argument('--seed', type=int, default=0)
     args = parser.parse_args()
     return args
@@ -45,6 +47,7 @@ config = {
         "index_column": 'event_id',
         "run_name_tag": 'my_example',
         "batch_size": 100,
+        "accumulate_grad_batches": 1,
         "num_workers": 6,
         "target": 'direction',
         "early_stopping_patience": 5,
@@ -52,12 +55,16 @@ config = {
             "max_epochs": 10,
             "gpus": [0],
             "distribution_strategy": None,
+            "precision": 16, 
         },
         'train_selection': '/workspace/icecube/data/train_selection_max_200_pulses.csv',
         'validate_selection': '/workspace/icecube/data/validate_selection_max_200_pulses.csv',
         'test_selection': None,
         'base_dir': 'training',
-        'dynedge': {}
+        'bias': False,
+        'dynedge': {
+            'max_pulses': 200,
+        }
 }
 
 
@@ -66,11 +73,16 @@ if __name__ == '__main__':
     seed_everything(args.seed)
 
     config['fit']['max_epochs'] = args.max_epochs
+    config['batch_size'] = args.batch_size
+    config['accumulate_grad_batches'] = args.accumulate_grad_batches
     config['dynedge']['dynedge_layer_sizes'] = [
         (x * args.size_multiplier, y * args.size_multiplier) 
         for x, y in [(128, 256), (336, 256), (336, 256), (336, 256)]
     ]
-    model = train_dynedge_from_scratch(config=config, state_dict_path=str(args.state_dict_path))
+    model = train_dynedge_from_scratch(
+        config=config, 
+        state_dict_path=None if args.state_dict_path is None else str(args.state_dict_path)
+    )
 
     model.save(args.model_save_dir / 'model.pth')
     model.save_state_dict(args.model_save_dir / 'state_dict.pth')
