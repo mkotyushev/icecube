@@ -120,20 +120,20 @@ def load_pretrained_model(
 def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
     """Constructs training and validation dataloaders for training with early stopping."""
     train_dataloader = make_dataloader(db = config['path'],
-                                            selection = pd.read_csv(config['train_selection'])[config['index_column']].ravel().tolist(),
+                                            selection = None,
                                             pulsemaps = config['pulsemap'],
                                             features = features,
                                             truth = truth,
                                             batch_size = config['batch_size'],
                                             num_workers = config['num_workers'],
-                                            shuffle = True,
+                                            shuffle = config['shuffle_train'],
                                             labels = {'direction': Direction()},
                                             index_column = config['index_column'],
                                             truth_table = config['truth_table'],
                                             )
     
     validate_dataloader = make_dataloader(db = config['path'],
-                                            selection = pd.read_csv(config['validate_selection'])[config['index_column']].ravel().tolist(),
+                                            selection = None,
                                             pulsemaps = config['pulsemap'],
                                             features = features,
                                             truth = truth,
