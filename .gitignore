@@ -5,3 +5,4 @@ data/
 weights/
 results/
 __pycache__/
+wandb/
