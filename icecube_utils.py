@@ -132,7 +132,7 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
                                             truth_table = config['truth_table'],
                                             )
     
-    validate_dataloader = make_dataloader(db = config['path'],
+    validate_dataloader = make_dataloader(db = config['inference_database_path'],
                                             selection = None,
                                             pulsemaps = config['pulsemap'],
                                             features = features,
