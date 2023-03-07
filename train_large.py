@@ -61,6 +61,8 @@ config = {
             "distribution_strategy": "ddp",
             "precision": 16, 
             "log_every_n_steps": 50,
+            "val_check_interval": 0.2,
+            # "limit_train_batches": 10
             # "profiler": "simple",
             # "profiler": AdvancedProfiler(dirpath=".", filename="perf_logs"),
         },
