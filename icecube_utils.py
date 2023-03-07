@@ -7,7 +7,7 @@ from collections import OrderedDict
 from copy import deepcopy
 from typing import Any, Dict, List
 from pytorch_lightning.callbacks import EarlyStopping, GradientAccumulationScheduler
-from torch.optim.adam import Adam
+from torch.optim.adamw import AdamW
 from graphnet.data.constants import FEATURES, TRUTH
 from graphnet.models import StandardModel
 from graphnet.models.detector.icecube import IceCubeKaggle
@@ -76,7 +76,7 @@ def build_model(config: Dict[str,Any], train_dataloader: Any) -> StandardModel:
         detector=detector,
         gnn=gnn,
         tasks=[task],
-        optimizer_class=Adam,
+        optimizer_class=AdamW,
         optimizer_kwargs={"lr": 1e-03, "eps": 1e-03},
         scheduler_class=PiecewiseLinearLR,
         scheduler_kwargs={
