@@ -5,6 +5,7 @@ import numpy as np
 import torch
 from graphnet.data.constants import FEATURES, TRUTH
 from pathlib import Path
+from pytorch_lightning.loggers import WandbLogger
 
 from icecube_utils import (
     train_dynedge_from_scratch
@@ -38,7 +39,8 @@ features = FEATURES.KAGGLE
 truth = TRUTH.KAGGLE
 
 config = {
-        "path": '/workspace/icecube/data/batch_1.db',
+        "path": '/workspace/data/fold_0.db',
+        # "path": '/workspace/icecube/data/batch_1.db',
         "inference_database_path": '/workspace/icecube/data/batch_51.db',
         "pulsemap": 'pulse_table',
         "truth_table": 'meta_table',
@@ -56,6 +58,7 @@ config = {
             "gpus": [0],
             "distribution_strategy": None,
             "precision": 16, 
+            "log_every_n_steps": 50
         },
         'train_selection': '/workspace/icecube/data/train_selection_max_200_pulses.csv',
         'validate_selection': '/workspace/icecube/data/validate_selection_max_200_pulses.csv',
@@ -64,7 +67,8 @@ config = {
         'bias': False,
         'dynedge': {
             'max_pulses': 200,
-        }
+        },
+        'shuffle_train': False
 }
 
 
@@ -79,6 +83,15 @@ if __name__ == '__main__':
         (x * args.size_multiplier, y * args.size_multiplier) 
         for x, y in [(128, 256), (336, 256), (336, 256), (336, 256)]
     ]
+
+    wandb_logger = WandbLogger(
+        project='icecube',
+        save_dir='./wandb',
+        log_model=False,
+    )
+    wandb_logger.experiment.config.update(config)
+    config['fit']['logger'] = wandb_logger
+    
     model = train_dynedge_from_scratch(
         config=config, 
         state_dict_path=None if args.state_dict_path is None else str(args.state_dict_path)
