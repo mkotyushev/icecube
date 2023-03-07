@@ -6,6 +6,7 @@ import torch
 from graphnet.data.constants import FEATURES, TRUTH
 from pathlib import Path
 from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.profilers import AdvancedProfiler
 
 from icecube_utils import (
     train_dynedge_from_scratch
@@ -39,9 +40,10 @@ features = FEATURES.KAGGLE
 truth = TRUTH.KAGGLE
 
 config = {
-        "path": '/workspace/data/fold_0.db',
         # "path": '/workspace/icecube/data/batch_1.db',
-        "inference_database_path": '/workspace/icecube/data/batch_51.db',
+        # "inference_database_path": '/workspace/icecube/data/batch_51.db',
+        "path": '/workspace/data/fold_0.db',
+        "inference_database_path": '/workspace/data/fold_0_val.db',
         "pulsemap": 'pulse_table',
         "truth_table": 'meta_table',
         "features": features,
@@ -50,19 +52,18 @@ config = {
         "run_name_tag": 'my_example',
         "batch_size": 100,
         "accumulate_grad_batches": 1,
-        "num_workers": 6,
+        "num_workers": 10,
         "target": 'direction',
         "early_stopping_patience": 5,
         "fit": {
             "max_epochs": 10,
             "gpus": [0],
-            "distribution_strategy": None,
+            "distribution_strategy": "ddp",
             "precision": 16, 
-            "log_every_n_steps": 50
+            "log_every_n_steps": 50,
+            # "profiler": "simple",
+            # "profiler": AdvancedProfiler(dirpath=".", filename="perf_logs"),
         },
-        'train_selection': '/workspace/icecube/data/train_selection_max_200_pulses.csv',
-        'validate_selection': '/workspace/icecube/data/validate_selection_max_200_pulses.csv',
-        'test_selection': None,
         'base_dir': 'training',
         'bias': False,
         'dynedge': {
@@ -97,5 +98,5 @@ if __name__ == '__main__':
         state_dict_path=None if args.state_dict_path is None else str(args.state_dict_path)
     )
 
-    model.save(args.model_save_dir / 'model.pth')
-    model.save_state_dict(args.model_save_dir / 'state_dict.pth')
+    model.save(str(args.model_save_dir / 'model.pth'))
+    model.save_state_dict(str(args.model_save_dir / 'state_dict.pth'))
