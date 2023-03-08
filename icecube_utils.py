@@ -25,7 +25,6 @@ from graphnet.training.utils import make_dataloader
 from graphnet.utilities.logging import get_logger
 from ground_metric import GroundMetric
 
-import utils as myutils
 from compute_activations import (
     normalize_tensor,
     save_activations
@@ -50,7 +49,12 @@ truth = TRUTH.KAGGLE
 
 logger = get_logger()
 
-def build_model(config: Dict[str,Any], train_dataloader: Any) -> StandardModel:
+
+def build_model(
+    config: Dict[str, Any], 
+    train_dataloader: Any, 
+    fix_points = None
+) -> StandardModel:
     """Builds GNN from config"""
     # Building model
     detector = IceCubeKaggle(
@@ -60,6 +64,7 @@ def build_model(config: Dict[str,Any], train_dataloader: Any) -> StandardModel:
         nb_inputs=detector.nb_outputs,
         global_pooling_schemes=["min", "max", "mean"],
         bias=config['bias'],
+        fix_points=fix_points,
         **config['dynedge']
     )
 
@@ -68,7 +73,8 @@ def build_model(config: Dict[str,Any], train_dataloader: Any) -> StandardModel:
             hidden_size=gnn.nb_outputs,
             target_labels=config["target"],
             loss_function=VonMisesFisher3DLoss(),
-            bias=config['bias']
+            bias=config['bias'],
+            fix_points=fix_points,
         )
         prediction_columns = [config["target"] + "_x", 
                               config["target"] + "_y", 
