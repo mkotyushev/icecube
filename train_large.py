@@ -7,6 +7,7 @@ from graphnet.data.constants import FEATURES, TRUTH
 from pathlib import Path
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.profilers import AdvancedProfiler
+from pytorch_lightning.strategies.ddp import DDPStrategy
 
 from icecube_utils import (
     train_dynedge_from_scratch
@@ -22,6 +23,12 @@ def parse_args():
     parser.add_argument('--batch-size', type=int, default=100)
     parser.add_argument('--accumulate-grad-batches', type=int, default=1)
     parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument(
+        '--mode', 
+        type=str, 
+        choices=['small', 'large', 'large_contd'], 
+        default='small'
+    )
     args = parser.parse_args()
     return args
 
@@ -58,7 +65,7 @@ config = {
         "fit": {
             "max_epochs": 10,
             "gpus": [0],
-            "distribution_strategy": "ddp",
+            "distribution_strategy": DDPStrategy(find_unused_parameters=False),
             "precision": 16, 
             "log_every_n_steps": 50,
             "val_check_interval": 0.2,
@@ -86,6 +93,21 @@ if __name__ == '__main__':
         (x * args.size_multiplier, y * args.size_multiplier) 
         for x, y in [(128, 256), (336, 256), (336, 256), (336, 256)]
     ]
+
+    if args.mode == 'large':
+        config['fit']['val_check_interval'] = 0.1
+        config['fit']['max_steps'] = 10000
+        config['checkpoint_during_train_epoch_interval'] = 0.1
+    elif args.mode == 'large_contd':
+        config['fit']['val_check_interval'] = 0.1
+        config['fit']['max_steps'] = -1
+        config['checkpoint_during_train_epoch_interval'] = 0.1
+    elif args.mode == 'small':
+        config['fit']['val_check_interval'] = 0.2
+        config['fit']['max_steps'] = -1
+        config['checkpoint_during_train_epoch_interval'] = -1
+    else:
+        raise ValueError(f'Unknown mode {args.mode}')
 
     wandb_logger = WandbLogger(
         project='icecube',
