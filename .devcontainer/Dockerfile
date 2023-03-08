@@ -32,11 +32,19 @@ RUN /root/miniconda3/envs/graphnet/bin/python -m pip install --upgrade pip
 RUN /root/miniconda3/envs/graphnet/bin/pip install --default-timeout=1000 --extra-index-url https://download.pytorch.org/whl/cu117 torch==1.13+cu117 torchvision==0.14.0+cu117
 COPY ../requirements.txt .
 RUN /root/miniconda3/envs/graphnet/bin/pip install --default-timeout=1000 -r requirements.txt 
-RUN /root/miniconda3/envs/graphnet/bin/pip install matplotlib tables
+RUN /root/miniconda3/envs/graphnet/bin/pip install matplotlib tables gpytorch tabulate
 
 ENV PYTHONPATH=/workspace/icecube/lib/graphnet/src:$PYTHONPATH
 ENV PYTHONPATH=/workspace/icecube/lib/otfusion:$PYTHONPATH
 ENV PYTHONPATH=/workspace/icecube/lib/otfusion/cifar:$PYTHONPATH
+ENV PYTHONPATH=/workspace/icecube/lib/loss-surface-simplexes:$PYTHONPATH
+ENV PYTHONPATH=/workspace/icecube/lib/loss-surface-simplexes/simplex:$PYTHONPATH
+ENV PYTHONPATH=/workspace/icecube/lib/loss-surface-simplexes/simplex/models:$PYTHONPATH
+ENV PYTHONPATH=/workspace/icecube/lib:$PYTHONPATH
 ENV PATH=/workspace/icecube/lib/graphnet/src:$PATH
 ENV PATH=/workspace/icecube/lib/otfusion:$PATH
 ENV PATH=/workspace/icecube/lib/otfusion/cifar:$PATH
+ENV PATH=/workspace/icecube/lib/loss-surface-simplexes:$PATH
+ENV PATH=/workspace/icecube/lib/loss-surface-simplexes/simplex:$PATH
+ENV PATH=/workspace/icecube/lib/loss-surface-simplexes/simplex/models:$PATH
+ENV PATH=/workspace/icecube/lib:$PATH
