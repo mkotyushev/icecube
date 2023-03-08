@@ -78,7 +78,14 @@ config = {
         'dynedge': {
             'max_pulses': 200,
         },
-        'shuffle_train': False
+        'shuffle_train': False,
+        'optimizer_kwargs': {
+            "lr": 1e-03, 
+            "eps": 1e-03
+        },
+        "scheduler_kwargs": {
+            "factors": [1e-02, 1, 1e-02],
+        }
 }
 
 
@@ -102,6 +109,7 @@ if __name__ == '__main__':
         config['fit']['val_check_interval'] = 0.1
         config['fit']['max_steps'] = -1
         config['checkpoint_during_train_epoch_interval'] = 0.1
+        config['scheduler_kwargs']['factors'] = [1e-02, 5e-03, 1e-03]
     elif args.mode == 'small':
         config['fit']['val_check_interval'] = 0.2
         config['fit']['max_steps'] = -1
