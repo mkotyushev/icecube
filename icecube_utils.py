@@ -81,7 +81,7 @@ def build_model(config: Dict[str,Any], train_dataloader: Any) -> StandardModel:
         gnn=gnn,
         tasks=[task],
         optimizer_class=AdamW,
-        optimizer_kwargs={"lr": 1e-03, "eps": 1e-03},
+        optimizer_kwargs=config["optimizer_kwargs"],
         scheduler_class=PiecewiseLinearLR,
         scheduler_kwargs={
             "milestones": [
@@ -89,7 +89,7 @@ def build_model(config: Dict[str,Any], train_dataloader: Any) -> StandardModel:
                 len(train_dataloader) / 2,
                 len(train_dataloader) * config["fit"]["max_epochs"],
             ],
-            "factors": [1e-02, 1, 1e-02],
+            "factors": config["scheduler_kwargs"]["factors"],
         },
         scheduler_config={
             "interval": "step",
