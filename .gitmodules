@@ -4,3 +4,6 @@
 [submodule "graphnet"]
 	path = lib/graphnet
 	url = git@github.com:mkotyushev/graphnet.git
+[submodule "lib/loss-surface-simplexes"]
+	path = lib/loss-surface-simplexes
+	url = git@github.com:mkotyushev/loss-surface-simplexes.git
