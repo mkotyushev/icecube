@@ -195,25 +195,13 @@ def train_dynedge_from_scratch(config: Dict[str, Any], state_dict_path=None) -> 
         ProgressBar(),
     ]
 
-    if (
-        'checkpoint_during_train_epoch_interval' in config and 
-        config['checkpoint_during_train_epoch_interval'] is not None
-    ):
-        every_n_train_steps = int(
-            len(train_dataloader) * 
-            config['checkpoint_during_train_epoch_interval']
-        )
-        model_checkpoint_callback = ModelCheckpoint(
-            monitor="val_loss",
-            save_top_k=1,
-            every_n_train_steps=every_n_train_steps,
-        )
-    else:
-        model_checkpoint_callback = ModelCheckpoint(
-            monitor="val_loss",
-            save_top_k=1,
-            every_n_epochs=1
-        )
+    model_checkpoint_callback = ModelCheckpoint(
+        dirpath='./checkpoints',
+        monitor="val_loss",
+        save_top_k=3,
+        save_on_train_epoch_end=False,
+        save_last=True,
+    )
     callbacks.append(model_checkpoint_callback)
 
     model.fit(
@@ -242,7 +230,7 @@ def inference(model, config: Dict[str, Any]) -> pd.DataFrame:
                                             index_column = config['index_column'],
                                             truth_table = config['truth_table'],
                                             max_n_pulses = config['max_n_pulses']['max_n_pulses'],
-                                            max_n_pulses_strategy='each_nth'
+                                            max_n_pulses_strategy='each_nth',
                                             **loss_weight_kwargs,
                                             )
     

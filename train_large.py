@@ -25,6 +25,12 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--weight-loss-by-inverse-n-pulses-log', action='store_true')
     parser.add_argument(
+        '--max-n-pulses-strategy', 
+        type=str, 
+        choices=['clamp', 'random', 'each_nth'], 
+        default='clamp'
+    )
+    parser.add_argument(
         '--mode', 
         type=str, 
         choices=['small', 'large', 'large_contd'], 
@@ -75,7 +81,8 @@ config = {
             "precision": 16, 
             "log_every_n_steps": 50,
             "val_check_interval": 0.2,
-            # "limit_train_batches": 10
+            # "limit_train_batches": 100,
+            # "limit_val_batches": 100
             # "profiler": "simple",
             # "profiler": AdvancedProfiler(dirpath=".", filename="perf_logs"),
         },
@@ -92,8 +99,13 @@ config = {
         },
         'max_n_pulses': {
             'max_n_pulses': 200,
-            'max_n_pulses_strategy': 'random'
+            'max_n_pulses_strategy': 'clamp'
         },
+        'loss_weight': {
+            'loss_weight_table': 'meta_table',
+            'loss_weight_columns': ['first_pulse_index', 'last_pulse_index'],
+            'loss_weight_transform': first_last_pulse_index_to_loss_weight,
+        }
 }
 
 
@@ -108,20 +120,18 @@ if __name__ == '__main__':
         (x * args.size_multiplier, y * args.size_multiplier) 
         for x, y in [(128, 256), (336, 256), (336, 256), (336, 256)]
     ]
+    config['max_n_pulses']['max_n_pulses_strategy'] = args.max_n_pulses_strategy
 
     if args.mode == 'large':
         config['fit']['val_check_interval'] = 0.1
         config['fit']['max_steps'] = 10000
-        config['checkpoint_during_train_epoch_interval'] = 0.1
     elif args.mode == 'large_contd':
         config['fit']['val_check_interval'] = 0.1
         config['fit']['max_steps'] = -1
-        config['checkpoint_during_train_epoch_interval'] = 0.1
         config['scheduler_kwargs']['factors'] = [1e-02, 5e-03, 1e-03]
     elif args.mode == 'small':
         config['fit']['val_check_interval'] = 0.2
         config['fit']['max_steps'] = -1
-        config['checkpoint_during_train_epoch_interval'] = -1
     else:
         raise ValueError(f'Unknown mode {args.mode}')
     
