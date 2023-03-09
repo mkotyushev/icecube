@@ -130,7 +130,9 @@ def load_pretrained_model(
 
 def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
     """Constructs training and validation dataloaders for training with early stopping."""
-    loss_weight_kwargs = {}
+    loss_weight_kwargs, max_n_pulses_kwargs = {}, {}
+    if 'max_n_pulses' in config:
+        max_n_pulses_kwargs = config['max_n_pulses']
     if 'loss_weight' in config:
         loss_weight_kwargs = config['loss_weight']
 
@@ -145,7 +147,8 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
                                             labels = {'direction': Direction()},
                                             index_column = config['index_column'],
                                             truth_table = config['truth_table'],
-                                            **loss_weight_kwargs
+                                            **loss_weight_kwargs,
+                                            **max_n_pulses_kwargs
                                             )
     
     validate_dataloader = make_dataloader(db = config['inference_database_path'],
@@ -159,6 +162,8 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
                                             labels = {'direction': Direction()},
                                             index_column = config['index_column'],
                                             truth_table = config['truth_table'],
+                                            max_n_pulses=config['max_n_pulses']['max_n_pulses'],
+                                            max_n_pulses_strategy="each_nth",
                                             **loss_weight_kwargs
                                             )
     return train_dataloader, validate_dataloader
@@ -222,6 +227,9 @@ def train_dynedge_from_scratch(config: Dict[str, Any], state_dict_path=None) -> 
 def inference(model, config: Dict[str, Any]) -> pd.DataFrame:
     """Applies model to the database specified in config['inference_database_path'] and saves results to disk."""
     # Make Dataloader
+    loss_weight_kwargs = {}
+    if 'loss_weight' in config:
+        loss_weight_kwargs = config['loss_weight']
     test_dataloader = make_dataloader(db = config['inference_database_path'],
                                             selection = None, # Entire database
                                             pulsemaps = config['pulsemap'],
@@ -233,6 +241,9 @@ def inference(model, config: Dict[str, Any]) -> pd.DataFrame:
                                             labels = {'direction': Direction()},
                                             index_column = config['index_column'],
                                             truth_table = config['truth_table'],
+                                            max_n_pulses = config['max_n_pulses']['max_n_pulses'],
+                                            max_n_pulses_strategy='each_nth'
+                                            **loss_weight_kwargs,
                                             )
     
     # Get predictions

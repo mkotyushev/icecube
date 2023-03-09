@@ -91,7 +91,11 @@ config = {
         },
         "scheduler_kwargs": {
             "factors": [1e-02, 1, 1e-02],
-        }
+        },
+        'max_n_pulses': {
+            'max_n_pulses': 200,
+            'max_n_pulses_strategy': 'random'
+        },
 }
 
 
