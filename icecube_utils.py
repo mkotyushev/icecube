@@ -73,6 +73,7 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config["target"],
             loss_function=VonMisesFisher3DLoss(),
+            loss_weight='loss_weight' if 'loss_weight' in config else None,
             bias=config['bias'],
             fix_points=fix_points,
         )
@@ -158,7 +159,7 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
                                             labels = {'direction': Direction()},
                                             index_column = config['index_column'],
                                             truth_table = config['truth_table'],
-                                          
+                                            **loss_weight_kwargs
                                             )
     return train_dataloader, validate_dataloader
 
