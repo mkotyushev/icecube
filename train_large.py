@@ -135,6 +135,11 @@ if __name__ == '__main__':
     else:
         raise ValueError(f'Unknown mode {args.mode}')
     
+    # Convert patience from epochs to validation checks
+    config['early_stopping_patience'] = \
+        config['early_stopping_patience'] / \
+        config['fit']['val_check_interval']
+
     if args.weight_loss_by_inverse_n_pulses_log:
         config['loss_weight'] = {
             'loss_weight_table': 'meta_table',
