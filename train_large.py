@@ -23,6 +23,7 @@ def parse_args():
     parser.add_argument('--batch-size', type=int, default=100)
     parser.add_argument('--accumulate-grad-batches', type=int, default=1)
     parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--weight-loss-by-inverse-n-pulses-log', action='store_true')
     parser.add_argument(
         '--mode', 
         type=str, 
@@ -41,6 +42,11 @@ def seed_everything(seed: int):
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+
+def first_last_pulse_index_to_loss_weight(first_last_pulse_index):
+    first, last = first_last_pulse_index[0][0], first_last_pulse_index[0][1]
+    return [[1 / np.log((last - first) + 1)]]
 
 
 features = FEATURES.KAGGLE
@@ -116,6 +122,13 @@ if __name__ == '__main__':
         config['checkpoint_during_train_epoch_interval'] = -1
     else:
         raise ValueError(f'Unknown mode {args.mode}')
+    
+    if args.weight_loss_by_inverse_n_pulses_log:
+        config['loss_weight'] = {
+            'loss_weight_table': 'meta_table',
+            'loss_weight_columns': ['first_pulse_index', 'last_pulse_index'],
+            'loss_weight_transform': first_last_pulse_index_to_loss_weight,
+        }
 
     wandb_logger = WandbLogger(
         project='icecube',

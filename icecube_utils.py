@@ -129,6 +129,10 @@ def load_pretrained_model(
 
 def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
     """Constructs training and validation dataloaders for training with early stopping."""
+    loss_weight_kwargs = {}
+    if 'loss_weight' in config:
+        loss_weight_kwargs = config['loss_weight']
+
     train_dataloader = make_dataloader(db = config['path'],
                                             selection = None,
                                             pulsemaps = config['pulsemap'],
@@ -140,6 +144,7 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
                                             labels = {'direction': Direction()},
                                             index_column = config['index_column'],
                                             truth_table = config['truth_table'],
+                                            **loss_weight_kwargs
                                             )
     
     validate_dataloader = make_dataloader(db = config['inference_database_path'],
