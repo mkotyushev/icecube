@@ -7,8 +7,6 @@ services:
     build:
       context: .
       dockerfile: .devcontainer/Dockerfile
-      ssh:
-        - default
     shm_size: '2gb'
     environment:
       - SSH_AUTH_SOCK:${SSH_AUTH_SOCK}
