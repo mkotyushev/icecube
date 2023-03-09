@@ -81,9 +81,7 @@ config = {
         },
         'base_dir': 'training',
         'bias': False,
-        'dynedge': {
-            'max_pulses': 200,
-        },
+        'dynedge': {},
         'shuffle_train': False,
         'optimizer_kwargs': {
             "lr": 1e-03, 
