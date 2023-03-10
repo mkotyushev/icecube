@@ -1,6 +1,7 @@
 
 import gc
 from pathlib import Path
+import math
 import numpy as np
 import pandas as pd
 import os
@@ -892,7 +893,7 @@ class BlockLinear(Module):
     
     @property
     def weight(self):
-        return torch.block_diag([linear.weight for linear in self.linears], dim=0)
+        return torch.block_diag(*[linear.weight for linear in self.linears])
     
     def freeze_first_n_blocks(self, n: int):
         """Freezes first n blocks"""
@@ -917,20 +918,25 @@ class BlockLinear(Module):
 
     def add_block(self, in_features_block: int, out_features_block: int):
         """Adds a new block"""
-        self.linears.append(
-            Linear(
-                in_features_block, 
-                out_features_block, 
-                bias=self.bias is not None,
-                device=self.linears[0].weight.device,
-                dtype=self.linears[0].weight.dtype
-            )
+        linear = Linear(
+            in_features_block, 
+            out_features_block, 
+            bias=self.bias is not None,
+            device=self.linears[0].weight.device,
+            dtype=self.linears[0].weight.dtype
         )
+        self.linears.append(linear)
 
         if self.type != 'input':
             self.in_features += in_features_block
         if self.type != 'output':
             self.out_features += out_features_block
+
+        # reinitialize added layer weights to match current in_features
+        bound = 1 / math.sqrt(self.in_features)
+        torch.nn.init.uniform_(linear.weight, -bound, bound)
+        if linear.bias is not None:
+            torch.nn.init.uniform_(linear.bias, -bound, bound)
 
         return self
 
@@ -1039,7 +1045,6 @@ def train_dynedge_blocks(
                         out_features_block=out_features_block
                     )
                     module.freeze_except_last_block()
-                    module.zero_last_block()
         
         # Train
         model = train_dynedge(
