@@ -10,7 +10,8 @@ from pytorch_lightning.profilers import AdvancedProfiler
 from pytorch_lightning.strategies.ddp import DDPStrategy
 
 from icecube_utils import (
-    train_dynedge_from_scratch
+    train_dynedge_blocks,
+    train_dynedge_from_scratch,
 )
 
 
@@ -36,6 +37,7 @@ def parse_args():
         choices=['small', 'large', 'large_contd'], 
         default='small'
     )
+    parser.add_argument('--n-blocks', type=int, default=None)
     args = parser.parse_args()
     return args
 
@@ -155,10 +157,19 @@ if __name__ == '__main__':
     wandb_logger.experiment.config.update(config)
     config['fit']['logger'] = wandb_logger
     
-    model = train_dynedge_from_scratch(
-        config=config, 
-        state_dict_path=None if args.state_dict_path is None else str(args.state_dict_path)
-    )
+    if args.n_blocks is not None:
+        config['fit']['distribution_strategy'] = None
+        model = train_dynedge_blocks(
+            config, 
+            args.n_blocks, 
+            args.model_save_dir,
+            args.state_dict_path
+        )
+    else:
+        model = train_dynedge_from_scratch(
+            config=config, 
+            state_dict_path=None if args.state_dict_path is None else str(args.state_dict_path)
+        )
 
     model.save(str(args.model_save_dir / 'model.pth'))
     model.save_state_dict(str(args.model_save_dir / 'state_dict.pth'))

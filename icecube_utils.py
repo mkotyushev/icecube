@@ -1,10 +1,13 @@
 
+import gc
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import os
 import torch
 from collections import OrderedDict
 from copy import deepcopy
+from mock import patch
 from typing import Any, Dict, List
 from pytorch_lightning.callbacks import (
     EarlyStopping, 
@@ -12,6 +15,8 @@ from pytorch_lightning.callbacks import (
     ModelCheckpoint
 )
 from torch.optim.adamw import AdamW
+from torch.nn import Module, Linear, ModuleList
+from torch import Tensor
 from graphnet.data.constants import FEATURES, TRUTH
 from graphnet.models import StandardModel
 from graphnet.models.detector.icecube import IceCubeKaggle
@@ -116,6 +121,7 @@ def load_pretrained_model(
     model = build_model(config = config, 
                         train_dataloader = train_dataloader)
     #model._inference_trainer = Trainer(config['fit'])
+    print(model.state_dict().keys())
     model.load_state_dict(state_dict_path)
     model.prediction_columns = [config["target"] + "_x", 
                               config["target"] + "_y", 
@@ -167,21 +173,8 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
                                             )
     return train_dataloader, validate_dataloader
 
-def train_dynedge_from_scratch(config: Dict[str, Any], state_dict_path=None) -> StandardModel:
-    """Builds and trains GNN according to config."""
-    logger.info(f"features: {config['features']}")
-    logger.info(f"truth: {config['truth']}")
-    
-    archive = os.path.join(config['base_dir'], "train_model_without_configs")
-    run_name = f"dynedge_{config['target']}_{config['run_name_tag']}"
 
-    train_dataloader, validate_dataloader = make_dataloaders(config = config)
-
-    if state_dict_path is None:
-        model = build_model(config, train_dataloader)
-    else:
-        model = load_pretrained_model(config, state_dict_path)
-
+def train_dynedge(model, config, train_dataloader, validate_dataloader):
     # Training model
     callbacks = [
         GradientAccumulationScheduler(
@@ -210,6 +203,25 @@ def train_dynedge_from_scratch(config: Dict[str, Any], state_dict_path=None) -> 
         **config["fit"],
     )
     return model
+
+
+def train_dynedge_from_scratch(config: Dict[str, Any], state_dict_path=None) -> StandardModel:
+    """Builds and trains GNN according to config."""
+    logger.info(f"features: {config['features']}")
+    logger.info(f"truth: {config['truth']}")
+    
+    archive = os.path.join(config['base_dir'], "train_model_without_configs")
+    run_name = f"dynedge_{config['target']}_{config['run_name_tag']}"
+
+    train_dataloader, validate_dataloader = make_dataloaders(config = config)
+
+    if state_dict_path is None:
+        model = build_model(config, train_dataloader)
+    else:
+        model = load_pretrained_model(config, state_dict_path)
+
+    return train_dynedge(model, config, train_dataloader, validate_dataloader)
+
 
 def inference(model, config: Dict[str, Any]) -> pd.DataFrame:
     """Applies model to the database specified in config['inference_database_path'] and saves results to disk."""
@@ -820,3 +832,224 @@ def calculate_angular_error(df : pd.DataFrame) -> pd.DataFrame:
     """Calcualtes the opening angle (angular error) between true and reconstructed direction vectors"""
     df['angular_error'] = np.arccos(df['true_x']*df['direction_x'] + df['true_y']*df['direction_y'] + df['true_z']*df['direction_z'])
     return df
+
+
+class BlockLinear(Module):
+    """Block linear layer"""
+    def __init__(self, in_features: int, out_features: int, bias: bool = True,
+                 device=None, dtype=None, block_sizes=None, type='intermediate') -> None:
+        super().__init__()
+
+        if block_sizes is None:
+            block_sizes = [(in_features, out_features)]
+
+        assert sum(block_size[0] for block_size in block_sizes) == in_features, \
+            "Sum of input features of all blocks must be equal to in_features"
+        assert sum(block_size[1] for block_size in block_sizes) == out_features, \
+            "Sum of output features of all blocks must be equal to out_features"
+        if type == 'input':
+            assert all(block_size[0] == in_features for block_size in block_sizes), \
+                "Input features of all blocks must be equal to in_features for type == input"
+        if type == 'output':
+            assert all(block_size[1] == out_features for block_size in block_sizes), \
+                "Output features of all blocks must be equal to out_features for type == output"
+
+        self.in_features = in_features 
+        self.out_features = out_features 
+        self.type = type
+        
+        self.linears = ModuleList()
+        for block_size in block_sizes:
+            self.linears.append(
+                Linear(
+                    block_size[0], 
+                    block_size[1], 
+                    bias=bias,
+                    device=device,
+                    dtype=dtype
+                )
+            )
+
+    def set_type(self, type):
+        if type == 'input':
+            assert all(
+                linear.in_features == self.in_features 
+                for linear in self.linears
+            )
+        elif type == 'output':
+            assert all(
+                linear.out_features == self.out_features 
+                for linear in self.linears
+            )
+        self.type = type
+        return self
+
+    @property
+    def bias(self):
+        if self.linears[0].bias is None:
+            return None
+        return torch.cat([linear.bias for linear in self.linears], dim=0)
+    
+    @property
+    def weight(self):
+        return torch.block_diag([linear.weight for linear in self.linears], dim=0)
+    
+    def freeze_first_n_blocks(self, n: int):
+        """Freezes first n blocks"""
+        for i, linear in enumerate(self.linears):
+            if i < n:
+                linear.weight.requires_grad = False
+                if linear.bias is not None:
+                    linear.bias.requires_grad = False
+        return self
+
+    def freeze_except_last_block(self):
+        """Freezes all blocks except last"""
+        self.freeze_first_n_blocks(len(self.linears) - 1)
+        return self
+
+    def zero_last_block(self):
+        """Zeros last block"""
+        self.linears[-1].weight.data.zero_()
+        if self.linears[-1].bias is not None:
+            self.linears[-1].bias.data.zero_()
+        return self
+
+    def add_block(self, in_features_block: int, out_features_block: int):
+        """Adds a new block"""
+        self.linears.append(
+            Linear(
+                in_features_block, 
+                out_features_block, 
+                bias=self.bias is not None,
+                device=self.linears[0].weight.device,
+                dtype=self.linears[0].weight.dtype
+            )
+        )
+
+        if self.type != 'input':
+            self.in_features += in_features_block
+        if self.type != 'output':
+            self.out_features += out_features_block
+
+        return self
+
+    def forward(self, x: Tensor) -> Tensor:
+        """Forward pass"""
+        # stacked horizontally
+        if self.type == 'input':
+            assert x.shape[1] == self.in_features
+            x = [linear(x) for linear in self.linears]
+            x = torch.cat(x, dim=1)
+        # stacked vertically
+        elif self.type == 'output':
+            in_sizes = [linear.in_features for linear in self.linears]
+            assert x.shape[1] == sum(in_sizes)
+            assert all(
+                linear.out_features == self.linears[0].out_features 
+                for linear in self.linears
+            )
+            x = torch.split(x, in_sizes, dim=1)
+            assert len(x) == len(self.linears)
+            x = torch.stack([linear(x_) for linear, x_ in zip(self.linears, x)], dim=0)
+            x = torch.sum(x, dim=0)
+        # block-diagonal
+        else:
+            in_sizes = [linear.in_features for linear in self.linears]
+            assert x.shape[1] == sum(in_sizes)
+            x = torch.split(x, in_sizes, dim=1)
+            assert len(x) == len(self.linears)
+            x = [linear(x_) for linear, x_ in zip(self.linears, x)]
+            x = torch.cat(x, dim=1)
+        return x
+
+
+def train_dynedge_blocks(
+    config: Dict[str, Any], 
+    n_blocks: int, 
+    model_save_dir: Path, 
+    state_dict_path: Path = None
+) -> StandardModel:
+    """Trains DynEdge with n_blocks blocks"""
+    assert n_blocks > 0, f'n_blocks must be > 0, got {n_blocks}'
+
+    # Build empty block model
+    train_dataloader, validate_dataloader = make_dataloaders(config=config)
+    with patch('torch.nn.Linear', BlockLinear):
+        model = build_model(config, train_dataloader)
+
+    # Load block 0 weights if provided
+    if state_dict_path is not None:
+        base_model = load_pretrained_model(
+            config, 
+            str(state_dict_path)
+        )
+        model.load_state_dict(
+            {
+                key: value 
+                for key, (_, value) in zip(
+                    model.state_dict().keys(), 
+                    base_model.state_dict().items()
+                )
+            }
+        )
+    
+        del base_model
+        gc.collect()
+    # Or train from scratch
+    else:
+        model = train_dynedge(
+            model,
+            config,
+            train_dataloader, 
+            validate_dataloader
+        )
+        model.save_state_dict(
+            str(model_save_dir / 'state_dict_n_blocks_1.pth')
+        )
+
+    # Set initial sizes to add blocks of these sizes
+    initial_linear_block_sizes = {
+        name: (module.in_features, module.out_features) 
+        for name, module in model.named_modules()
+        if isinstance(module, BlockLinear)
+    }
+
+    # Set input and output blocks types (handled differently)
+    for name, module in model.named_modules(): 
+        if isinstance(module, BlockLinear):
+            if name == '_gnn._conv_layers.0.nn.0':
+                module.set_type('input')
+            elif name == '_tasks.0._affine':
+                module.set_type('output')
+
+    # Train n_blocks - 1 blocks additionaly to first one
+    for i in range(n_blocks - 1):
+        # Add block and freeze all the previous blocks
+        for name, module in model.named_modules(): 
+            if isinstance(module, BlockLinear):
+                in_features_block, out_features_block = initial_linear_block_sizes[name]
+                
+                if name == '_gnn._post_processing.0':
+                    in_features_block = in_features_block - 17
+                
+                with torch.no_grad():
+                    module.add_block(
+                        in_features_block=in_features_block, 
+                        out_features_block=out_features_block
+                    )
+                    module.freeze_except_last_block()
+                    module.zero_last_block()
+        
+        # Train
+        model = train_dynedge(
+            model,
+            config,
+            train_dataloader, 
+            validate_dataloader
+        )
+        model.save_state_dict(
+            str(model_save_dir / f'state_dict_n_blocks_{i + 2}.pth')
+        )
+
+    return model
