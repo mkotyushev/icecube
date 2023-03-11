@@ -12,6 +12,8 @@ from pytorch_lightning.strategies.ddp import DDPStrategy
 from icecube_utils import (
     train_dynedge_blocks,
     train_dynedge_from_scratch,
+    FlipTimeTransform,
+    FlipCoordinateTransform
 )
 
 
@@ -38,6 +40,8 @@ def parse_args():
         default='small'
     )
     parser.add_argument('--n-blocks', type=int, default=None)
+    parser.add_argument('--enable-augmentations', action='store_true')
+    
     args = parser.parse_args()
     return args
 
@@ -148,6 +152,14 @@ if __name__ == '__main__':
             'loss_weight_columns': ['first_pulse_index', 'last_pulse_index'],
             'loss_weight_transform': first_last_pulse_index_to_loss_weight,
         }
+
+    if args.enable_augmentations:
+        config['train_transforms'] = [
+            FlipTimeTransform(features=features, p=0.5), 
+            FlipCoordinateTransform(features=features, p=0.5, coordinate='x'),
+            FlipCoordinateTransform(features=features, p=0.5, coordinate='y'),
+            FlipCoordinateTransform(features=features, p=0.5, coordinate='z'),
+        ]
 
     wandb_logger = WandbLogger(
         project='icecube',

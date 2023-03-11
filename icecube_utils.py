@@ -1159,18 +1159,21 @@ def train_dynedge_blocks(
 
 
 class RandomTransform:
-    def __init__(self, p=0.5):
+    def __init__(self, features, p=0.5):
         self.p = p
+        self.feature_to_index = {feature: i for i, feature in enumerate(features)}
     
-    def __call__(self, x, target=None):
+    def __call__(self, input, target=None):
         # Flip is equivalent to reversing the geometry
         if np.random.rand() < self.p:
-            x, target = self.transform(x, target)
+            input, target = self.transform(input, target)
 
         if target is not None:
-            return x, target
+            assert 0 <= target['zenith'] <= np.pi, target['zenith']
+            assert 0 <= target['azimuth'] <= 2 * np.pi, target['azimuth']
+            return input, target
     
-        return x
+        return input
 
 
 def angles_to_xyz(azimuth, zenith):
@@ -1181,17 +1184,23 @@ def angles_to_xyz(azimuth, zenith):
 
 
 def xyz_to_angles(x, y, z):
-    azimuth = np.arctan2(y, x)
+    azimuth = np.arctan2(y, x) + np.pi
+    if azimuth < 0:
+        azimuth += 2 * np.pi
     zenith = np.arccos(z)
     return azimuth, zenith
 
 
+# TODO check geometry: 
+# if coordinates are rotated w. r. t. south pole, 
+# it is probably not correct
 class FlipTimeTransform(RandomTransform):
     """Inverse time transform"""
-    def transform(self, x, target=None):
+    def transform(self, input, target=None):
         # Inveret time
-        for feature in ["time", "charge", "auxiliary"]:
-            x[feature] = x[feature][::-1]
+        for feature in ['charge', 'auxiliary']:
+            index = self.feature_to_index[feature]
+            input[:, index] = input[::-1, index]
         
         # Flip direction
         if target is not None:
@@ -1200,17 +1209,18 @@ class FlipTimeTransform(RandomTransform):
             x, y, z = -x, -y, -z
             target['azimuth'], target['zenith'] = xyz_to_angles(x, y, z)
 
-        return x, target
+        return input, target
     
 class FlipCoordinateTransform(RandomTransform):
     """Flip one of axes transform"""
-    def __init__(self, p, coordinate):
-        super().__init__(p)
+    def __init__(self, features, p, coordinate):
+        super().__init__(features, p)
         assert coordinate in ['x', 'y', 'z']
         self.coordinate = coordinate
+        self.coordinate_index = self.feature_to_index[coordinate]
     
-    def transform(self, x, target=None):
-        x[self.coordinate] = -x[self.coordinate]
+    def transform(self, input, target=None):
+        input[:, self.coordinate_index] = -input[:, self.coordinate_index]
 
         if target is not None:
             x, y, z = angles_to_xyz(target['azimuth'], target['zenith'])
@@ -1222,4 +1232,4 @@ class FlipCoordinateTransform(RandomTransform):
                 z = -z
             target['azimuth'], target['zenith'] = xyz_to_angles(x, y, z)
         
-        return x, target
+        return input, target
