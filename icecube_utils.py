@@ -1028,7 +1028,11 @@ def train_dynedge_blocks(
     model_save_dir: Path, 
     state_dict_path: Path = None
 ) -> StandardModel:
-    """Trains DynEdge with n_blocks blocks"""
+    """Trains DynEdge with n_blocks blocks
+    
+    Basically, for each block we train a new model with same architecture,
+    joined with previous models by task head.
+    """
     assert n_blocks > 0, f'n_blocks must be > 0, got {n_blocks}'
 
     # Build empty block model
@@ -1102,6 +1106,10 @@ def train_dynedge_blocks(
         # Add block and freeze all the previous blocks
         for name, module in model.named_modules(): 
             if isinstance(module, BlockLinear):
+                # Task layer is handled separately
+                if name == '_tasks.0._affine':
+                    continue
+
                 in_features_block, out_features_block = initial_linear_block_sizes[name]
                 
                 if name == '_gnn._post_processing.0':
@@ -1112,9 +1120,26 @@ def train_dynedge_blocks(
                         in_features_block=in_features_block, 
                         out_features_block=out_features_block
                     )
-                    module.zero_last_block()
+                    # module.zero_last_block()
                     module.freeze_except_last_block()
         
+        # Replace the task layers with simple freshly initalized 
+        # linear layers of suitable in_features
+        for i in range(len(model._tasks)):
+            model._tasks[i]._affine = BlockLinear(
+                in_features=
+                    model._tasks[i]._affine.in_features + 
+                    initial_linear_block_sizes['_tasks.0._affine'][0],
+                out_features=model._tasks[i]._affine.out_features,
+                bias=model._tasks[i]._affine.bias is not None,
+                device=model._tasks[i]._affine.weight.device,
+                dtype=model._tasks[i]._affine.weight.dtype,
+                block_sizes=None,
+                # intermediate here is on purpose so as it is simple linear layer
+                type='intermediate',
+                input_transform=None
+            )
+
         # with torch.no_grad():
         #     model(next(iter(train_dataloader)))
 
