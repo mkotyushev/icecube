@@ -13,7 +13,8 @@ from typing import Any, Dict, List
 from pytorch_lightning.callbacks import (
     EarlyStopping, 
     GradientAccumulationScheduler,
-    ModelCheckpoint
+    ModelCheckpoint,
+    LearningRateMonitor
 )
 from torch.optim.adamw import AdamW
 from torch.nn import Module, Linear, ModuleList
@@ -178,6 +179,7 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
 def train_dynedge(model, config, train_dataloader, validate_dataloader):
     # Training model
     callbacks = [
+        LearningRateMonitor(logging_interval="step"),
         GradientAccumulationScheduler(
             scheduling={0: config['accumulate_grad_batches']}
         ),
@@ -838,7 +840,7 @@ def calculate_angular_error(df : pd.DataFrame) -> pd.DataFrame:
 class BlockLinear(Module):
     """Block linear layer"""
     def __init__(self, in_features: int, out_features: int, bias: bool = True,
-                 device=None, dtype=None, block_sizes=None, type='intermediate') -> None:
+                 device=None, dtype=None, block_sizes=None, type='intermediate', input_transform=None) -> None:
         super().__init__()
 
         if block_sizes is None:
@@ -858,6 +860,7 @@ class BlockLinear(Module):
         self.in_features = in_features 
         self.out_features = out_features 
         self.type = type
+        self.input_transform = input_transform
         
         self.linears = ModuleList()
         for block_size in block_sizes:
@@ -883,6 +886,10 @@ class BlockLinear(Module):
                 for linear in self.linears
             )
         self.type = type
+        return self
+
+    def set_input_transform(self, input_transform):
+        self.input_transform = input_transform
         return self
 
     @property
@@ -942,6 +949,10 @@ class BlockLinear(Module):
 
     def forward(self, x: Tensor) -> Tensor:
         """Forward pass"""
+        if self.input_transform is not None:
+            with torch.no_grad():
+                x = self.input_transform(x, len(self.linears))
+        
         # stacked horizontally
         if self.type == 'input':
             assert x.shape[1] == self.in_features
@@ -968,6 +979,47 @@ class BlockLinear(Module):
             x = [linear(x_) for linear, x_ in zip(self.linears, x)]
             x = torch.cat(x, dim=1)
         return x
+
+
+def permute_cat_block_output(x, n_cat, n_blocks):
+    """Permute output of cat blocks"""
+    return x.reshape(
+        x.shape[0], n_cat, n_blocks, -1
+    ).permute(0, 2, 1, 3).reshape(x.shape[0], x.shape[1])
+
+
+def pre_input_dummy(x, n_blocks):
+    """Dummy view for pre-input"""
+    torch.set_printoptions(profile="full")
+    print(x[0])
+    torch.set_printoptions(profile="default") # reset
+    return x
+
+
+def edgeconv_input_view(x, n_blocks):
+    """View for edgeconv input"""
+    # x = pre_input_dummy(x, n_blocks)
+    return permute_cat_block_output(x, 2, n_blocks)
+
+
+def postprocessing_input_view(x, n_blocks):
+    """View for postprocessing input"""
+    # x = pre_input_dummy(x, n_blocks)
+
+    # torch.set_printoptions(profile="full")
+    # print(x[0])
+    x_to_permute = x[:, 17:]
+    x_to_permute = permute_cat_block_output(x_to_permute, 4, n_blocks)
+    x = torch.cat([x[:, :17], x_to_permute], dim=1)
+    # print(x[0])
+    # torch.set_printoptions(profile="default") # reset
+    return x
+
+
+def readout_input_view(x, n_blocks):
+    """View for readout input"""
+    # x = pre_input_dummy(x, n_blocks)
+    return permute_cat_block_output(x, 3, n_blocks)
 
 
 def train_dynedge_blocks(
@@ -1028,6 +1080,22 @@ def train_dynedge_blocks(
                 module.set_type('input')
             elif name == '_tasks.0._affine':
                 module.set_type('output')
+            
+            if name == '_gnn._post_processing.0':
+                module.set_input_transform(postprocessing_input_view)
+            elif (
+                name != '_gnn._conv_layers.0.nn.0' and 
+                '_gnn._conv_layers' in name and 
+                'nn.0' in name
+            ):
+                module.set_input_transform(edgeconv_input_view)
+            elif name == '_gnn._readout.0':
+                module.set_input_transform(readout_input_view)
+            # else:
+            #     module.set_input_transform(pre_input_dummy)
+    
+    # with torch.no_grad():
+    #     model(next(iter(train_dataloader)))
 
     # Train n_blocks - 1 blocks additionaly to first one
     for i in range(n_blocks - 1):
@@ -1044,8 +1112,12 @@ def train_dynedge_blocks(
                         in_features_block=in_features_block, 
                         out_features_block=out_features_block
                     )
+                    module.zero_last_block()
                     module.freeze_except_last_block()
         
+        # with torch.no_grad():
+        #     model(next(iter(train_dataloader)))
+
         # Train
         model = train_dynedge(
             model,
