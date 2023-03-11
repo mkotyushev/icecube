@@ -8,6 +8,7 @@ from pathlib import Path
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.profilers import AdvancedProfiler
 from pytorch_lightning.strategies.ddp import DDPStrategy
+from graphnet.data.sqlite.sqlite_dataset import SQLiteDataset, SQLiteDatasetMaxNPulses
 
 from icecube_utils import (
     train_dynedge_blocks,
