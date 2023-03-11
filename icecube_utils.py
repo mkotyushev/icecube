@@ -155,6 +155,7 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
                                             labels = {'direction': Direction()},
                                             index_column = config['index_column'],
                                             truth_table = config['truth_table'],
+                                            transforms = config['train_transforms'],
                                             **loss_weight_kwargs,
                                             **max_n_pulses_kwargs
                                             )
@@ -1155,3 +1156,70 @@ def train_dynedge_blocks(
         )
 
     return model
+
+
+class RandomTransform:
+    def __init__(self, p=0.5):
+        self.p = p
+    
+    def __call__(self, x, target=None):
+        # Flip is equivalent to reversing the geometry
+        if np.random.rand() < self.p:
+            x, target = self.transform(x, target)
+
+        if target is not None:
+            return x, target
+    
+        return x
+
+
+def angles_to_xyz(azimuth, zenith):
+    x = np.cos(azimuth) * np.sin(zenith)
+    y = np.sin(azimuth) * np.sin(zenith)
+    z = np.cos(zenith)
+    return x, y, z
+
+
+def xyz_to_angles(x, y, z):
+    azimuth = np.arctan2(y, x)
+    zenith = np.arccos(z)
+    return azimuth, zenith
+
+
+class FlipTimeTransform(RandomTransform):
+    """Inverse time transform"""
+    def transform(self, x, target=None):
+        # Inveret time
+        for feature in ["time", "charge", "auxiliary"]:
+            x[feature] = x[feature][::-1]
+        
+        # Flip direction
+        if target is not None:
+            azimuth, zenith = target['azimuth'], target['zenith']
+            x, y, z = angles_to_xyz(azimuth, zenith)
+            x, y, z = -x, -y, -z
+            target['azimuth'], target['zenith'] = xyz_to_angles(x, y, z)
+
+        return x, target
+    
+class FlipCoordinateTransform(RandomTransform):
+    """Flip one of axes transform"""
+    def __init__(self, p, coordinate):
+        super().__init__(p)
+        assert coordinate in ['x', 'y', 'z']
+        self.coordinate = coordinate
+    
+    def transform(self, x, target=None):
+        x[self.coordinate] = -x[self.coordinate]
+
+        if target is not None:
+            x, y, z = angles_to_xyz(target['azimuth'], target['zenith'])
+            if self.coordinate == 'x':
+                x = -x
+            elif self.coordinate == 'y':
+                y = -y
+            elif self.coordinate == 'z':
+                z = -z
+            target['azimuth'], target['zenith'] = xyz_to_angles(x, y, z)
+        
+        return x, target
