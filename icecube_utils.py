@@ -144,36 +144,40 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
     if 'loss_weight' in config:
         loss_weight_kwargs = config['loss_weight']
 
-    train_dataloader = make_dataloader(db = config['path'],
-                                            selection = None,
-                                            pulsemaps = config['pulsemap'],
-                                            features = features,
-                                            truth = truth,
-                                            batch_size = config['batch_size'],
-                                            num_workers = config['num_workers'],
-                                            shuffle = config['shuffle_train'],
-                                            labels = {'direction': Direction()},
-                                            index_column = config['index_column'],
-                                            truth_table = config['truth_table'],
-                                            transforms = config['train_transforms'],
-                                            **loss_weight_kwargs,
-                                            **max_n_pulses_kwargs
-                                            )
+    train_dataloader = make_dataloader(
+        dataset_class = config['dataset_class'],
+        db = config['path'],
+        selection = None,
+        pulsemaps = config['pulsemap'],
+        features = features,
+        truth = truth,
+        batch_size = config['batch_size'],
+        num_workers = config['num_workers'],
+        shuffle = config['shuffle_train'],
+        labels = {'direction': Direction()},
+        index_column = config['index_column'],
+        truth_table = config['truth_table'],
+        transforms = config['train_transforms'],
+        **loss_weight_kwargs,
+        **max_n_pulses_kwargs
+    )
     
-    validate_dataloader = make_dataloader(db = config['inference_database_path'],
-                                            selection = None,
-                                            pulsemaps = config['pulsemap'],
-                                            features = features,
-                                            truth = truth,
-                                            batch_size = config['batch_size'],
-                                            num_workers = config['num_workers'],
-                                            shuffle = False,
-                                            labels = {'direction': Direction()},
-                                            index_column = config['index_column'],
-                                            truth_table = config['truth_table'],
-                                            max_n_pulses=config['max_n_pulses']['max_n_pulses'],
-                                            max_n_pulses_strategy="each_nth",
-                                            )
+    validate_dataloader = make_dataloader(
+        dataset_class = config['dataset_class'],
+        db = config['inference_database_path'],
+        selection = None,
+        pulsemaps = config['pulsemap'],
+        features = features,
+        truth = truth,
+        batch_size = config['batch_size'],
+        num_workers = config['num_workers'],
+        shuffle = False,
+        labels = {'direction': Direction()},
+        index_column = config['index_column'],
+        truth_table = config['truth_table'],
+        max_n_pulses=config['max_n_pulses']['max_n_pulses'],
+        max_n_pulses_strategy="clamp",
+    )
     return train_dataloader, validate_dataloader
 
 
@@ -242,7 +246,7 @@ def inference(model, config: Dict[str, Any]) -> pd.DataFrame:
                                             index_column = config['index_column'],
                                             truth_table = config['truth_table'],
                                             max_n_pulses = config['max_n_pulses']['max_n_pulses'],
-                                            max_n_pulses_strategy='each_nth',
+                                            max_n_pulses_strategy='clamp',
                                             )
     
     # Get predictions
@@ -935,6 +939,14 @@ class BlockLinear(Module):
         )
         self.linears.append(linear)
 
+        # Re-normalize weights of existing blocks
+        scale = (len(self.linears) - 1) / len(self.linears)
+        with torch.no_grad():
+            for linear in self.linears[:-1]:
+                linear.weight.data *= scale
+                if linear.bias is not None:
+                    linear.bias.data *= scale
+
         if self.type != 'input':
             self.in_features += in_features_block
         if self.type != 'output':
@@ -1104,6 +1116,9 @@ def train_dynedge_blocks(
 
     # Train n_blocks - 1 blocks additionaly to first one
     for i in range(n_blocks - 1):
+        for name, module in model.named_modules():
+            if isinstance(module, BlockLinear):
+                print(torch.norm(module.weight))
         # Add block and freeze all the previous blocks
         for name, module in model.named_modules(): 
             if isinstance(module, BlockLinear):

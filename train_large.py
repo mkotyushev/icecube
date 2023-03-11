@@ -30,7 +30,7 @@ def parse_args():
     parser.add_argument(
         '--max-n-pulses-strategy', 
         type=str, 
-        choices=['clamp', 'random', 'each_nth'], 
+        choices=['clamp', 'random_sequential'], 
         default='clamp'
     )
     parser.add_argument(
@@ -65,10 +65,10 @@ features = FEATURES.KAGGLE
 truth = TRUTH.KAGGLE
 
 config = {
-        # "path": '/workspace/icecube/data/batch_1.db',
-        # "inference_database_path": '/workspace/icecube/data/batch_51.db',
-        "path": '/workspace/data/fold_0.db',
-        "inference_database_path": '/workspace/data/fold_0_val.db',
+        "path": '/workspace/icecube/data/batch_14.db',
+        "inference_database_path": '/workspace/icecube/data/batch_656.db',
+        # "path": '/workspace/data/fold_0.db',
+        # "inference_database_path": '/workspace/data/fold_0_val.db',
         "pulsemap": 'pulse_table',
         "truth_table": 'meta_table',
         "features": features,
@@ -87,9 +87,9 @@ config = {
             "precision": 16, 
             "log_every_n_steps": 50,
             "val_check_interval": 0.2,
-            # "limit_train_batches": 100,
-            # "limit_val_batches": 100
-            # "profiler": "simple",
+            "limit_train_batches": 100,
+            "limit_val_batches": 100,
+            "profiler": "simple",
             # "profiler": AdvancedProfiler(dirpath=".", filename="perf_logs"),
         },
         'base_dir': 'training',
@@ -111,7 +111,9 @@ config = {
             'loss_weight_table': 'meta_table',
             'loss_weight_columns': ['first_pulse_index', 'last_pulse_index'],
             'loss_weight_transform': first_last_pulse_index_to_loss_weight,
-        }
+        },
+        'dataset_class': SQLiteDataset,
+        # 'dataset_class': SQLiteDatasetMaxNPulses,
 }
 
 
@@ -136,7 +138,7 @@ if __name__ == '__main__':
         config['fit']['max_steps'] = -1
         config['scheduler_kwargs']['factors'] = [1e-02, 5e-03, 1e-03]
     elif args.mode == 'small':
-        config['fit']['val_check_interval'] = 0.2
+        config['fit']['val_check_interval'] = 1.0
         config['fit']['max_steps'] = -1
     else:
         raise ValueError(f'Unknown mode {args.mode}')
