@@ -160,6 +160,8 @@ if __name__ == '__main__':
             FlipCoordinateTransform(features=features, p=0.5, coordinate='y'),
             FlipCoordinateTransform(features=features, p=0.5, coordinate='z'),
         ]
+    else:
+        config['train_transforms'] = []
 
     wandb_logger = WandbLogger(
         project='icecube',
