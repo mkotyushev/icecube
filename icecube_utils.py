@@ -1199,16 +1199,19 @@ def angles_to_xyz(azimuth, zenith):
 
 
 def xyz_to_angles(x, y, z):
-    azimuth = np.arctan2(y, x) + np.pi
+    norm = np.linalg.norm([x, y, z])
+    assert np.isclose(norm, 1)
+    x, y, z = x / norm, y / norm, z / norm
+
+    azimuth = np.arctan2(y, x)
     if azimuth < 0:
         azimuth += 2 * np.pi
+    
     zenith = np.arccos(z)
+    
     return azimuth, zenith
 
 
-# TODO check geometry: 
-# if coordinates are rotated w. r. t. south pole, 
-# it is probably not correct
 class FlipTimeTransform(RandomTransform):
     """Inverse time transform"""
     def transform(self, input, target=None):
@@ -1247,4 +1250,56 @@ class FlipCoordinateTransform(RandomTransform):
                 z = -z
             target['azimuth'], target['zenith'] = xyz_to_angles(x, y, z)
         
+        return input, target
+
+
+def rotate_azimuth(x, y, z, angle):
+    x, y, z = x * np.cos(angle) - y * np.sin(angle), x * np.sin(angle) + y * np.cos(angle), z
+    return x, y, z
+
+
+def rotate_zenith(x, y, z, angle):
+    x, y, z = x * np.cos(angle) - z * np.sin(angle), y, x * np.sin(angle) + z * np.cos(angle)
+    return x, y, z
+
+
+class RotateAngleTransform(RandomTransform):
+    """Rotate angle transform"""
+    def __init__(self, features, p, angle):
+        super().__init__(features, p)
+        self.angle = angle
+        self.feature_to_index = {feature: i for i, feature in enumerate(features)}
+
+    def transform(self, input, target=None):
+        x, y, z = \
+            input[:, self.feature_to_index['x']], \
+            input[:, self.feature_to_index['y']], \
+            input[:, self.feature_to_index['z']]
+
+        if self.angle == 'azimuth':
+            additional_angle = np.random.rand() * 2 * np.pi
+            input[:, self.feature_to_index['x']], \
+            input[:, self.feature_to_index['y']], \
+            input[:, self.feature_to_index['z']] = rotate_azimuth(x, y, z, additional_angle)
+
+            if target is not None:
+                azimuth, zenith = target['azimuth'], target['zenith']
+                azimuth = (azimuth + additional_angle) % (2 * np.pi)
+                target['azimuth'], target['zenith'] = azimuth, zenith
+        elif self.angle == 'zenith':
+            additional_angle = np.random.rand() * np.pi
+            input[:, self.feature_to_index['x']], \
+            input[:, self.feature_to_index['y']], \
+            input[:, self.feature_to_index['z']] = rotate_zenith(x, y, z, additional_angle)
+
+            if target is not None:
+                azimuth, zenith = target['azimuth'], target['zenith']
+                zenith += additional_angle
+                if zenith > np.pi:
+                    zenith = 2 * np.pi - zenith
+                    azimuth += np.pi
+                    if azimuth > 2 * np.pi:
+                        azimuth -= 2 * np.pi
+                target['azimuth'], target['zenith'] = azimuth, zenith
+
         return input, target

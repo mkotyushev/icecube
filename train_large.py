@@ -14,7 +14,8 @@ from icecube_utils import (
     train_dynedge_blocks,
     train_dynedge_from_scratch,
     FlipTimeTransform,
-    FlipCoordinateTransform
+    FlipCoordinateTransform,
+    RotateAngleTransform,
 )
 
 
@@ -156,12 +157,16 @@ if __name__ == '__main__':
             'loss_weight_transform': first_last_pulse_index_to_loss_weight,
         }
 
+    # TODO: fix z-axes related transforms
+    # or check if large loss is normal behavior 
     if args.enable_augmentations:
         config['train_transforms'] = [
-            FlipTimeTransform(features=features, p=0.5), 
+            # FlipTimeTransform(features=features, p=0.5), 
             FlipCoordinateTransform(features=features, p=0.5, coordinate='x'),
             FlipCoordinateTransform(features=features, p=0.5, coordinate='y'),
-            FlipCoordinateTransform(features=features, p=0.5, coordinate='z'),
+            # FlipCoordinateTransform(features=features, p=0.5, coordinate='z'),
+            RotateAngleTransform(features=features, p=0.5, angle='azimuth'),
+            # RotateAngleTransform(features=features, p=0.5, angle='zenith'),
         ]
     else:
         config['train_transforms'] = []
