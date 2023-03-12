@@ -1180,14 +1180,17 @@ class RandomTransform:
     
     def __call__(self, input, target=None):
         # Flip is equivalent to reversing the geometry
+        input_shape = input.shape
         if np.random.rand() < self.p:
             input, target = self.transform(input, target)
+
+        assert input.shape == input_shape
 
         if target is not None:
             assert 0 <= target['zenith'] <= np.pi, target['zenith']
             assert 0 <= target['azimuth'] <= 2 * np.pi, target['azimuth']
             return input, target
-    
+
         return input
 
 
