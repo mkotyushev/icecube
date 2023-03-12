@@ -14,8 +14,7 @@ from icecube_utils import (
     train_dynedge_blocks,
     train_dynedge_from_scratch,
     FlipTimeTransform,
-    FlipCoordinateTransform,
-    RotateAngleTransform,
+    FlipCoordinateTransform
 )
 
 
@@ -64,11 +63,11 @@ def first_last_pulse_index_to_loss_weight(first_last_pulse_index):
 
 
 features = FEATURES.KAGGLE
-truth = TRUTH.KAGGLE
+truth = ['zenith', 'azimuth']
 
 config = {
-        "path": '/workspace/icecube/data/batch_14.db',
-        "inference_database_path": '/workspace/icecube/data/batch_656.db',
+        "path": '/workspace/icecube/data/batch_1.db',
+        "inference_database_path": '/workspace/icecube/data/batch_51.db',
         # "path": '/workspace/data/fold_0.db',
         # "inference_database_path": '/workspace/data/fold_0_val.db',
         "pulsemap": 'pulse_table',
@@ -80,7 +79,7 @@ config = {
         "batch_size": 100,
         "accumulate_grad_batches": 1,
         "num_workers": 10,
-        "target": 'direction',
+        "target": ['zenith', 'azimuth'],
         "early_stopping_patience": 5,
         "fit": {
             "max_epochs": 10,
@@ -89,9 +88,9 @@ config = {
             "precision": 16, 
             "log_every_n_steps": 50,
             "val_check_interval": 0.2,
-            "limit_train_batches": 100,
-            "limit_val_batches": 100,
-            "profiler": "simple",
+            # "limit_train_batches": 100,
+            # "limit_val_batches": 100,
+            # "profiler": "simple",
             # "profiler": AdvancedProfiler(dirpath=".", filename="perf_logs"),
         },
         'base_dir': 'training',
@@ -157,16 +156,12 @@ if __name__ == '__main__':
             'loss_weight_transform': first_last_pulse_index_to_loss_weight,
         }
 
-    # TODO: fix z-axes related transforms
-    # or check if large loss is normal behavior 
     if args.enable_augmentations:
         config['train_transforms'] = [
-            # FlipTimeTransform(features=features, p=0.5), 
+            FlipTimeTransform(features=features, p=0.5), 
             FlipCoordinateTransform(features=features, p=0.5, coordinate='x'),
             FlipCoordinateTransform(features=features, p=0.5, coordinate='y'),
-            # FlipCoordinateTransform(features=features, p=0.5, coordinate='z'),
-            RotateAngleTransform(features=features, p=0.5, angle='azimuth'),
-            # RotateAngleTransform(features=features, p=0.5, angle='zenith'),
+            FlipCoordinateTransform(features=features, p=0.5, coordinate='z'),
         ]
     else:
         config['train_transforms'] = []

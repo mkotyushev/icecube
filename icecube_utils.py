@@ -24,9 +24,9 @@ from graphnet.models import StandardModel
 from graphnet.models.detector.icecube import IceCubeKaggle
 from graphnet.models.gnn import DynEdge
 from graphnet.models.graph_builders import KNNGraphBuilder
-from graphnet.models.task.reconstruction import DirectionReconstructionWithKappa
+from graphnet.models.task.reconstruction import AzimuthReconstructionWithKappa, DirectionReconstructionWithKappa, ZenithReconstructionWithKappa
 from graphnet.training.callbacks import ProgressBar, PiecewiseLinearLR
-from graphnet.training.loss_functions import VonMisesFisher3DLoss
+from graphnet.training.loss_functions import VonMisesFisher2DLoss, VonMisesFisher3DLoss
 from graphnet.training.labels import Direction
 from graphnet.training.utils import make_dataloader
 from graphnet.utilities.logging import get_logger
@@ -52,7 +52,7 @@ from wasserstein_ensemble import (
 
 # Constants
 features = FEATURES.KAGGLE
-truth = TRUTH.KAGGLE
+truth = ['zenith', 'azimuth']
 
 logger = get_logger()
 
@@ -75,6 +75,7 @@ def build_model(
         **config['dynedge']
     )
 
+    tasks = []
     if config["target"] == 'direction':
         task = DirectionReconstructionWithKappa(
             hidden_size=gnn.nb_outputs,
@@ -84,16 +85,44 @@ def build_model(
             bias=config['bias'],
             fix_points=fix_points,
         )
+        tasks.append(task)
         prediction_columns = [config["target"] + "_x", 
                               config["target"] + "_y", 
                               config["target"] + "_z", 
                               config["target"] + "_kappa" ]
         additional_attributes = ['zenith', 'azimuth', 'event_id']
+    else:
+        assert isinstance(config["target"], list)
+        assert 'zenith' in config["target"][0]
+        assert 'azimuth' in config["target"][1]
+        task = ZenithReconstructionWithKappa(
+            hidden_size=gnn.nb_outputs,
+            target_labels=config["target"][0],
+            loss_function=VonMisesFisher2DLoss(),
+            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            bias=config['bias'],
+            fix_points=fix_points,
+        )
+        tasks.append(task)
+        task = AzimuthReconstructionWithKappa(
+            hidden_size=gnn.nb_outputs,
+            target_labels=config["target"][1],
+            loss_function=VonMisesFisher2DLoss(),
+            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            bias=config['bias'],
+            fix_points=fix_points,
+        )
+        tasks.append(task)
+        prediction_columns = [config["target"][0], 
+                              config["target"][0] + '_kappa',
+                              config["target"][1], 
+                              config["target"][1] + '_kappa']
+        additional_attributes = [*truth, 'event_id']
 
     model = StandardModel(
         detector=detector,
         gnn=gnn,
-        tasks=[task],
+        tasks=tasks,
         optimizer_class=AdamW,
         optimizer_kwargs=config["optimizer_kwargs"],
         scheduler_class=PiecewiseLinearLR,
@@ -154,7 +183,7 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
         batch_size = config['batch_size'],
         num_workers = config['num_workers'],
         shuffle = config['shuffle_train'],
-        labels = {'direction': Direction()},
+        labels = {'direction': Direction(azimuth_key=truth[1], zenith_key=truth[0])},
         index_column = config['index_column'],
         truth_table = config['truth_table'],
         transforms = config['train_transforms'],
@@ -172,7 +201,7 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
         batch_size = config['batch_size'],
         num_workers = config['num_workers'],
         shuffle = False,
-        labels = {'direction': Direction()},
+        labels = {'direction': Direction(azimuth_key=truth[1], zenith_key=truth[0])},
         index_column = config['index_column'],
         truth_table = config['truth_table'],
         max_n_pulses=config['max_n_pulses']['max_n_pulses'],
@@ -242,7 +271,7 @@ def inference(model, config: Dict[str, Any]) -> pd.DataFrame:
                                             batch_size = config['batch_size'],
                                             num_workers = config['num_workers'],
                                             shuffle = False,
-                                            labels = {'direction': Direction()},
+                                            labels = {'direction': Direction(azimuth_key=truth[1], zenith_key=truth[0])},
                                             index_column = config['index_column'],
                                             truth_table = config['truth_table'],
                                             max_n_pulses = config['max_n_pulses']['max_n_pulses'],
