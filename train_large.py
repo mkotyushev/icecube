@@ -32,7 +32,7 @@ def parse_args():
     parser.add_argument(
         '--max-n-pulses-strategy', 
         type=str, 
-        choices=['clamp', 'random_sequential'], 
+        choices=['clamp', 'random_sequential', 'random'], 
         default='clamp'
     )
     parser.add_argument(
