@@ -159,10 +159,14 @@ def build_model(
             fix_points=fix_points,
         )
         tasks.append(task)
-        prediction_columns = [config['truth'][0] + '_pred', 
-                              config['truth'][0] + '_kappa',
-                              config['truth'][1] + '_pred', 
-                              config['truth'][1] + '_kappa']
+        prediction_columns = [
+            config['truth'][0] + '_sin', 
+            config['truth'][0] + '_cos',
+            config['truth'][0] + '_kappa',
+            config['truth'][1] + '_sin', 
+            config['truth'][1] + '_cos',
+            config['truth'][1] + '_kappa',
+        ]
         additional_attributes = [*config['truth'], 'event_id']
     elif config["target"] == 'angles_sincos_euclidean':
         task = AngleReconstructionSinCos(
@@ -185,10 +189,14 @@ def build_model(
             fix_points=fix_points,
         )
         tasks.append(task)
-        prediction_columns = [config['truth'][0] + '_pred', 
-                              config['truth'][0] + '_kappa',
-                              config['truth'][1] + '_pred', 
-                              config['truth'][1] + '_kappa']
+        prediction_columns = [
+            config['truth'][0] + '_sin', 
+            config['truth'][0] + '_cos',
+            config['truth'][0] + '_kappa',
+            config['truth'][1] + '_sin', 
+            config['truth'][1] + '_cos',
+            config['truth'][1] + '_kappa',
+        ]
         additional_attributes = [*config['truth'], 'event_id']
 
     model = StandardModel(
@@ -226,11 +234,6 @@ def load_pretrained_model(
     #model._inference_trainer = Trainer(config['fit'])
     print(model.state_dict().keys())
     model.load_state_dict(state_dict_path)
-    prediction_columns = [config["target"][0] + '_pred', 
-                            config["target"][0] + '_kappa',
-                            config["target"][1] + '_pred', 
-                            config["target"][1] + '_kappa']
-    additional_attributes = [*config['truth'], 'event_id']
 
     if return_train_dataloader:
         return model, train_dataloader
