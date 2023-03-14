@@ -81,7 +81,7 @@ config = {
         "batch_size": 100,
         "accumulate_grad_batches": 1,
         "num_workers": 10,
-        "target": 'zenith_cos_euclidean',
+        "target": 'zenith',
         # "target": 'direction',
         "early_stopping_patience": 30,
         "fit": {
@@ -97,7 +97,7 @@ config = {
             # "profiler": AdvancedProfiler(dirpath=".", filename="perf_logs"),
         },
         'base_dir': 'training',
-        'bias': False,
+        'bias': True,
         'dynedge': {},
         'shuffle_train': True,
         'optimizer_kwargs': {
@@ -162,8 +162,8 @@ if __name__ == '__main__':
     if args.enable_augmentations:
         config['train_transforms'] = [
             # FlipTimeTransform(features=features, p=0.5), 
-            # FlipCoordinateTransform(features=features, p=0.5, coordinate='x'),
-            # FlipCoordinateTransform(features=features, p=0.5, coordinate='y'),
+            FlipCoordinateTransform(features=features, p=0.5, coordinate='x'),
+            FlipCoordinateTransform(features=features, p=0.5, coordinate='y'),
             FlipCoordinateTransform(features=features, p=0.5, coordinate='z'),
             RotateAngleTransform(features=features, p=0.5, angle='zenith'),
         ]

@@ -226,6 +226,19 @@ def build_model(
             config['truth'][0] + '_cos',
         ]
         additional_attributes = [*config['truth'], 'event_id']
+    elif config["target"] == 'zenith':
+        task = ZenithReconstructionWithKappa(
+            hidden_size=gnn.nb_outputs,
+            target_labels=config['truth'][0],
+            loss_function=VonMisesFisher2DLoss(),
+            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            bias=config['bias'],
+            fix_points=fix_points,
+        )
+        tasks.append(task)
+        prediction_columns = [config['truth'][0] + '_pred', 
+                              config['truth'][0] + '_kappa']
+        additional_attributes = [*config['truth'], 'event_id']
 
     model = StandardModel(
         detector=detector,
