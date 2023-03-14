@@ -192,10 +192,24 @@ def build_model(
         prediction_columns = [
             config['truth'][0] + '_sin', 
             config['truth'][0] + '_cos',
-            config['truth'][0] + '_kappa',
             config['truth'][1] + '_sin', 
             config['truth'][1] + '_cos',
-            config['truth'][1] + '_kappa',
+        ]
+        additional_attributes = [*config['truth'], 'event_id']
+    elif config["target"] == 'zenith_sincos_euclidean':
+        task = AngleReconstructionSinCos(
+            half=True,
+            hidden_size=gnn.nb_outputs,
+            target_labels=config['truth'][0],
+            loss_function=EuclidianDistanceLossSinCos(),
+            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            bias=config['bias'],
+            fix_points=fix_points,
+        )
+        tasks.append(task)
+        prediction_columns = [
+            config['truth'][0] + '_sin', 
+            config['truth'][0] + '_cos',
         ]
         additional_attributes = [*config['truth'], 'event_id']
 
@@ -203,6 +217,7 @@ def build_model(
         detector=detector,
         gnn=gnn,
         tasks=tasks,
+        tasks_weiths=config["tasks_weights"] if "tasks_weights" in config else None,
         optimizer_class=AdamW,
         optimizer_kwargs=config["optimizer_kwargs"],
         scheduler_class=PiecewiseLinearLR,
@@ -1323,8 +1338,7 @@ def angles_to_xyz(azimuth, zenith):
 
 
 def xyz_to_angles(x, y, z):
-    norm = np.linalg.norm([x, y, z])
-    assert np.isclose(norm, 1)
+    norm = np.linalg.norm([x, y, z], ord=2)
     x, y, z = x / norm, y / norm, z / norm
 
     azimuth = np.arctan2(y, x)
@@ -1353,6 +1367,7 @@ class FlipTimeTransform(RandomTransform):
 
         return input, target
     
+
 class FlipCoordinateTransform(RandomTransform):
     """Flip one of axes transform"""
     def __init__(self, features, p, coordinate):
@@ -1377,14 +1392,50 @@ class FlipCoordinateTransform(RandomTransform):
         return input, target
 
 
+def rotate(v, k, angle):
+    """Rotate vectors v around axis k by angle (right-hand rule).
+    v: batch of 3D vectors to rotate, shape (B, 3)
+    k: 3D unit-vector, shape (3,)
+    angle: rotation angle in radians, shape (1,)
+    """
+    # https://en.wikipedia.org/wiki/Rodrigues%27_rotation_formula
+    assert np.isclose(np.linalg.norm(k, ord=2), 1.0)
+    k = k[None, :]  # 1 x 3
+    cos, sin = np.cos(angle), np.sin(angle)
+    return (
+        v * cos +  # B x 3
+        np.cross(k, v) * sin +  # B x 3
+        k * (np.dot(k, v.T)).T * (1 - cos)  # 1 x 3 * (1 x 3 . (B x 3).T).T = B x 3
+    )
+
+
 def rotate_azimuth(x, y, z, angle):
-    x, y, z = x * np.cos(angle) - y * np.sin(angle), x * np.sin(angle) + y * np.cos(angle), z
-    return x, y, z
+    """Rotate vectors given by coordinates x, y, z 
+    by azimuth angle ~ around z-axis by angle (right-hand rule).
+    x, y, z: batch of 3D vectors to rotate, shape (B,) each
+    angle: rotation angle in radians, shape (1,)
+    """
+    v = np.stack([x, y, z], axis=-1)  # B x 3
+    k = np.array([0, 0, 1])  # 3
+    v_new = rotate(v, k, angle)  # B x 3
+    return v_new[:, 0], v_new[:, 1], v_new[:, 2]
 
 
-def rotate_zenith(x, y, z, angle):
-    x, y, z = x * np.cos(angle) - z * np.sin(angle), y, x * np.sin(angle) + z * np.cos(angle)
-    return x, y, z
+def rotate_zenith(x, y, z, w, angle):
+    """Rotate vectors given by coordinates x, y, z 
+    by zenith angle (right-hand rule).
+    x, y, z: batch of 3D vectors to rotate, shape (B,) each
+    w: base vector of current direction, shape (3,)
+    angle: rotation angle in radians, shape (1,)
+    """
+    v = np.stack([x, y, z], axis=-1)  # B x 3
+    k = np.cross(
+        w,
+        np.array([0, 0, 1])
+    )  # 3
+    k = k / np.linalg.norm(k, ord=2)
+    v_new = rotate(v, k, angle)
+    return v_new[:, 0], v_new[:, 1], v_new[:, 2]
 
 
 class RotateAngleTransform(RandomTransform):
@@ -1412,9 +1463,12 @@ class RotateAngleTransform(RandomTransform):
                 target['azimuth'], target['zenith'] = azimuth, zenith
         elif self.angle == 'zenith':
             additional_angle = np.random.rand() * np.pi
+            w = np.array(angles_to_xyz(target['azimuth'], target['zenith']))
             input[:, self.feature_to_index['x']], \
             input[:, self.feature_to_index['y']], \
-            input[:, self.feature_to_index['z']] = rotate_zenith(x, y, z, additional_angle)
+            input[:, self.feature_to_index['z']] = rotate_zenith(
+                x, y, z, w, additional_angle
+            )
 
             if target is not None:
                 azimuth, zenith = target['azimuth'], target['zenith']

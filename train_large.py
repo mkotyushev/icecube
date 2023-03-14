@@ -11,6 +11,7 @@ from pytorch_lightning.strategies.ddp import DDPStrategy
 from graphnet.data.sqlite.sqlite_dataset import SQLiteDataset, SQLiteDatasetMaxNPulses
 
 from icecube_utils import (
+    RotateAngleTransform,
     train_dynedge_blocks,
     train_dynedge_from_scratch,
     FlipTimeTransform,
@@ -66,21 +67,23 @@ features = FEATURES.KAGGLE
 truth = ['zenith', 'azimuth']
 
 config = {
-        "path": '/workspace/icecube/data/batch_1.db',
-        "inference_database_path": '/workspace/icecube/data/batch_51.db',
-        # "path": '/workspace/data/fold_0.db',
-        # "inference_database_path": '/workspace/data/fold_0_val.db',
+        # "path": '/workspace/icecube/data/batch_1.db',
+        # "inference_database_path": '/workspace/icecube/data/batch_51.db',
+        "path": '/workspace/data/fold_0.db',
+        "inference_database_path": '/workspace/data/fold_0_val.db',
         "pulsemap": 'pulse_table',
         "truth_table": 'meta_table',
         "features": features,
         "truth": truth,
+        # "tasks_weights": [0.75, 0.25],
         "index_column": 'event_id',
         "run_name_tag": 'my_example',
         "batch_size": 100,
         "accumulate_grad_batches": 1,
         "num_workers": 10,
-        "target": ['zenith', 'azimuth'],
-        "early_stopping_patience": 5,
+        "target": 'zenith_sincos_euclidean',
+        # "target": 'direction',
+        "early_stopping_patience": 30,
         "fit": {
             "max_epochs": 10,
             "gpus": [0],
@@ -96,7 +99,7 @@ config = {
         'base_dir': 'training',
         'bias': False,
         'dynedge': {},
-        'shuffle_train': False,
+        'shuffle_train': True,
         'optimizer_kwargs': {
             "lr": 1e-03, 
             "eps": 1e-03
@@ -139,7 +142,7 @@ if __name__ == '__main__':
         config['fit']['max_steps'] = -1
         config['scheduler_kwargs']['factors'] = [1e-02, 5e-03, 1e-03]
     elif args.mode == 'small':
-        config['fit']['val_check_interval'] = 1.0
+        config['fit']['val_check_interval'] = 0.5
         config['fit']['max_steps'] = -1
     else:
         raise ValueError(f'Unknown mode {args.mode}')
@@ -158,10 +161,11 @@ if __name__ == '__main__':
 
     if args.enable_augmentations:
         config['train_transforms'] = [
-            FlipTimeTransform(features=features, p=0.5), 
-            FlipCoordinateTransform(features=features, p=0.5, coordinate='x'),
-            FlipCoordinateTransform(features=features, p=0.5, coordinate='y'),
+            # FlipTimeTransform(features=features, p=0.5), 
+            # FlipCoordinateTransform(features=features, p=0.5, coordinate='x'),
+            # FlipCoordinateTransform(features=features, p=0.5, coordinate='y'),
             FlipCoordinateTransform(features=features, p=0.5, coordinate='z'),
+            RotateAngleTransform(features=features, p=0.5, angle='zenith'),
         ]
     else:
         config['train_transforms'] = []
