@@ -24,9 +24,9 @@ from graphnet.models import StandardModel
 from graphnet.models.detector.icecube import IceCubeKaggle
 from graphnet.models.gnn import DynEdge
 from graphnet.models.graph_builders import KNNGraphBuilder
-from graphnet.models.task.reconstruction import AngleReconstructionSinCos, AngleReconstructionSincosWithKappa, AzimuthReconstructionWithKappa, DirectionReconstructionWithKappa, ZenithAzimuthReconstruction, ZenithReconstructionWithKappa
+from graphnet.models.task.reconstruction import AngleReconstructionCos, AngleReconstructionSinCos, AngleReconstructionSincosWithKappa, AzimuthReconstructionWithKappa, DirectionReconstructionWithKappa, ZenithAzimuthReconstruction, ZenithReconstructionWithKappa
 from graphnet.training.callbacks import ProgressBar, PiecewiseLinearLR
-from graphnet.training.loss_functions import CosineLoss, EuclidianDistanceLossSinCos, VonMisesFisher2DLoss, VonMisesFisher2DLossSinCos, VonMisesFisher3DLoss
+from graphnet.training.loss_functions import CosineLoss, EuclidianDistanceLossCos, EuclidianDistanceLossSinCos, VonMisesFisher2DLoss, VonMisesFisher2DLossSinCos, VonMisesFisher3DLoss
 from graphnet.training.labels import Direction
 from graphnet.training.utils import make_dataloader
 from graphnet.utilities.logging import get_logger
@@ -209,6 +209,20 @@ def build_model(
         tasks.append(task)
         prediction_columns = [
             config['truth'][0] + '_sin', 
+            config['truth'][0] + '_cos',
+        ]
+        additional_attributes = [*config['truth'], 'event_id']
+    elif config["target"] == 'zenith_cos_euclidean':
+        task = AngleReconstructionCos(
+            hidden_size=gnn.nb_outputs,
+            target_labels=config['truth'][0],
+            loss_function=EuclidianDistanceLossCos(),
+            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            bias=config['bias'],
+            fix_points=fix_points,
+        )
+        tasks.append(task)
+        prediction_columns = [
             config['truth'][0] + '_cos',
         ]
         additional_attributes = [*config['truth'], 'event_id']

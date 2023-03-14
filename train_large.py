@@ -81,7 +81,7 @@ config = {
         "batch_size": 100,
         "accumulate_grad_batches": 1,
         "num_workers": 10,
-        "target": 'zenith_sincos_euclidean',
+        "target": 'zenith_cos_euclidean',
         # "target": 'direction',
         "early_stopping_patience": 30,
         "fit": {
