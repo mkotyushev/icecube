@@ -24,7 +24,7 @@ from graphnet.models import StandardModel
 from graphnet.models.detector.icecube import IceCubeKaggle
 from graphnet.models.gnn import DynEdge
 from graphnet.models.graph_builders import KNNGraphBuilder
-from graphnet.models.task.reconstruction import AngleReconstructionCos, AngleReconstructionSinCos, AngleReconstructionSincosWithKappa, AzimuthReconstructionWithKappa, DirectionReconstructionWithKappa, ZenithAzimuthReconstruction, ZenithReconstructionWithKappa
+from graphnet.models.task.reconstruction import AngleReconstructionCos, AngleReconstructionSinCos, AngleReconstructionSincosWithKappa, AzimuthReconstruction, AzimuthReconstructionWithKappa, DirectionReconstructionWithKappa, ZenithAzimuthReconstruction, ZenithReconstructionWithKappa
 from graphnet.training.callbacks import ProgressBar, PiecewiseLinearLR
 from graphnet.training.loss_functions import CosineLoss, EuclidianDistanceLossCos, EuclidianDistanceLossSinCos, VonMisesFisher2DLoss, VonMisesFisher2DLossSinCos, VonMisesFisher3DLoss
 from graphnet.training.labels import Direction
@@ -238,6 +238,19 @@ def build_model(
         tasks.append(task)
         prediction_columns = [config['truth'][0] + '_pred', 
                               config['truth'][0] + '_kappa']
+        additional_attributes = [*config['truth'], 'event_id']
+    elif config["target"] == 'azimuth':
+        task = AzimuthReconstruction(
+            hidden_size=gnn.nb_outputs,
+            target_labels=config['truth'][1],
+            loss_function=VonMisesFisher2DLoss(),
+            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            bias=config['bias'],
+            fix_points=fix_points,
+        )
+        tasks.append(task)
+        prediction_columns = [config['truth'][1] + '_pred', 
+                              config['truth'][1] + '_kappa']
         additional_attributes = [*config['truth'], 'event_id']
 
     model = StandardModel(

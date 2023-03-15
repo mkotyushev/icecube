@@ -81,7 +81,7 @@ config = {
         "batch_size": 100,
         "accumulate_grad_batches": 1,
         "num_workers": 10,
-        "target": 'zenith',
+        "target": 'azimuth',
         # "target": 'direction',
         "early_stopping_patience": 30,
         "fit": {
