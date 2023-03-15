@@ -166,6 +166,7 @@ if __name__ == '__main__':
             FlipCoordinateTransform(features=features, p=0.5, coordinate='y'),
             FlipCoordinateTransform(features=features, p=0.5, coordinate='z'),
             RotateAngleTransform(features=features, p=0.5, angle='zenith'),
+            RotateAngleTransform(features=features, p=0.5, angle='azimuth'),
         ]
     else:
         config['train_transforms'] = []
