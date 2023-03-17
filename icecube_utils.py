@@ -320,7 +320,8 @@ def load_pretrained_model(
             )
         elif path.endswith('.pth'):
             logger.info(f'Loading state dict from {path}')
-            model.load_state_dict(path)
+            state_dict = torch.load(path)
+            model.load_state_dict(state_dict)
         else:
             raise ValueError(f'path must be a .pth or .ckpt file, got {path}')
 
@@ -375,6 +376,9 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
 
 
 def train_dynedge(model, config, train_dataloader, validate_dataloader):
+    # Compile model
+    torch.compile(model)
+
     # Training model
     callbacks = [
         LearningRateMonitor(logging_interval="step"),
@@ -449,6 +453,7 @@ def inference(model, config: Dict[str, Any]) -> pd.DataFrame:
             dataloader = test_dataloader,
             prediction_columns=model.prediction_columns,
             additional_attributes=model.additional_attributes,
+            distribution_strategy='auto'
         )
     # Save predictions and model to file
     archive = os.path.join(config['base_dir'], "train_model_without_configs")
@@ -1335,8 +1340,10 @@ def train_dynedge_blocks(
         # Add block and freeze all the previous blocks
         for name, module in model.named_modules(): 
             if isinstance(module, BlockLinear):
+                name = name.replace('_orig_mod.', '')
+
                 # Task layer is handled separately
-                if name == '_tasks.0._affine':
+                if name.startswith('_tasks') and name.endswith('_affine'):
                     continue
 
                 in_features_block, out_features_block = initial_linear_block_sizes[name]
@@ -1358,7 +1365,7 @@ def train_dynedge_blocks(
             model._tasks[i]._affine = BlockLinear(
                 in_features=
                     model._tasks[i]._affine.in_features + 
-                    initial_linear_block_sizes['_tasks.0._affine'][0],
+                    initial_linear_block_sizes[f'_tasks.{i}._affine'][0],
                 out_features=model._tasks[i]._affine.out_features,
                 bias=model._tasks[i]._affine.bias is not None,
                 device=model._tasks[i]._affine.weight.device,

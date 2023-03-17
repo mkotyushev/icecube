@@ -184,7 +184,7 @@ if __name__ == '__main__':
     config['fit']['logger'] = wandb_logger
     
     if args.n_blocks is not None:
-        config['fit']['distribution_strategy'] = None
+        config['fit']['distribution_strategy'] = 'auto'
         model = train_dynedge_blocks(
             config, 
             args.n_blocks, 
