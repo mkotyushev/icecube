@@ -70,8 +70,8 @@ truth = ['zenith', 'azimuth']
 config = {
         # "path": '/workspace/icecube/data/batch_1.db',
         # "inference_database_path": '/workspace/icecube/data/batch_51.db',
-        "path": '/workspace/data/fold_0.db',
-        "inference_database_path": '/workspace/data/fold_0_val.db',
+        "path": '/workspace/icecube/data/fold_0.db',
+        "inference_database_path": '/workspace/icecube/data/fold_0_val.db',
         "pulsemap": 'pulse_table',
         "truth_table": 'meta_table',
         "features": features,
@@ -172,12 +172,15 @@ if __name__ == '__main__':
     else:
         config['train_transforms'] = []
 
+    if args.state_dict_path is not None and args.state_dict_path.suffix == '.ckpt':
+        config['fit']['ckpt_path'] = args.state_dict_path
+
     wandb_logger = WandbLogger(
         project='icecube',
         save_dir='./wandb',
         log_model=False,
     )
-    wandb_logger.experiment.config.update(config)
+    wandb_logger.experiment.config.update(config, allow_val_change=True)
     config['fit']['logger'] = wandb_logger
     
     if args.n_blocks is not None:

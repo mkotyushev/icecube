@@ -296,15 +296,33 @@ def build_model(
 
 def load_pretrained_model(
     config: Dict[str,Any], 
-    state_dict_path: str = '/kaggle/input/dynedge-pretrained/dynedge_pretrained_batch_1_to_50/state_dict.pth',
+    path: str = '/kaggle/input/dynedge-pretrained/dynedge_pretrained_batch_1_to_50/state_dict.pth',
     return_train_dataloader: bool = False
 ) -> StandardModel:
     train_dataloader, _ = make_dataloaders(config = config)
-    model = build_model(config = config, 
-                        train_dataloader = train_dataloader)
-    #model._inference_trainer = Trainer(config['fit'])
-    print(model.state_dict().keys())
-    model.load_state_dict(state_dict_path)
+    
+    if path.endswith('model.pth'):
+        logger.info(f'Loading model from {path}')
+        model = StandardModel.load(path)
+    else:
+        model = build_model(config = config, 
+                            train_dataloader = train_dataloader)
+        #model._inference_trainer = Trainer(config['fit'])
+        logger.info(f'Current model state dict keys: {model.state_dict().keys()}')
+
+        if path.endswith('.ckpt'):
+            logger.info(f'Loading checkpoint from {path}')
+            model = StandardModel.load_from_checkpoint(
+                path, 
+                detector=model._detector, 
+                gnn=model._gnn, 
+                tasks=[task for task in model._tasks]
+            )
+        elif path.endswith('.pth'):
+            logger.info(f'Loading state dict from {path}')
+            model.load_state_dict(path)
+        else:
+            raise ValueError(f'path must be a .pth or .ckpt file, got {path}')
 
     if return_train_dataloader:
         return model, train_dataloader
