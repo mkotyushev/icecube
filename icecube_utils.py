@@ -291,6 +291,8 @@ def build_model(
     )
     model.prediction_columns = prediction_columns
     model.additional_attributes = additional_attributes
+
+    model = torch.compile(model)
     
     return model
 
@@ -431,6 +433,7 @@ def inference(model, config: Dict[str, Any]) -> pd.DataFrame:
             dataloader = test_dataloader,
             prediction_columns=model.prediction_columns,
             additional_attributes=model.additional_attributes,
+            distribution_strategy='auto'
         )
     # Save predictions and model to file
     archive = os.path.join(config['base_dir'], "train_model_without_configs")
