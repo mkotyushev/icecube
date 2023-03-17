@@ -291,8 +291,6 @@ def build_model(
     )
     model.prediction_columns = prediction_columns
     model.additional_attributes = additional_attributes
-
-    model = torch.compile(model)
     
     return model
 
@@ -306,7 +304,9 @@ def load_pretrained_model(
                         train_dataloader = train_dataloader)
     #model._inference_trainer = Trainer(config['fit'])
     print(model.state_dict().keys())
-    model.load_state_dict(state_dict_path)
+
+    state_dict = torch.load(state_dict_path)
+    model.load_state_dict(state_dict)
 
     if return_train_dataloader:
         return model, train_dataloader
@@ -359,6 +359,9 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
 
 
 def train_dynedge(model, config, train_dataloader, validate_dataloader):
+    # Compile model
+    torch.compile(model)
+
     # Training model
     callbacks = [
         LearningRateMonitor(logging_interval="step"),
@@ -1320,8 +1323,10 @@ def train_dynedge_blocks(
         # Add block and freeze all the previous blocks
         for name, module in model.named_modules(): 
             if isinstance(module, BlockLinear):
+                name = name.replace('_orig_mod.', '')
+
                 # Task layer is handled separately
-                if name == '_tasks.0._affine':
+                if name.startswith('_tasks') and name.endswith('_affine'):
                     continue
 
                 in_features_block, out_features_block = initial_linear_block_sizes[name]
@@ -1343,7 +1348,7 @@ def train_dynedge_blocks(
             model._tasks[i]._affine = BlockLinear(
                 in_features=
                     model._tasks[i]._affine.in_features + 
-                    initial_linear_block_sizes['_tasks.0._affine'][0],
+                    initial_linear_block_sizes[f'_tasks.{i}._affine'][0],
                 out_features=model._tasks[i]._affine.out_features,
                 bias=model._tasks[i]._affine.bias is not None,
                 device=model._tasks[i]._affine.weight.device,
