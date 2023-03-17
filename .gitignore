@@ -6,3 +6,6 @@ weights/
 results/
 __pycache__/
 wandb/
+*.log
+*.pdf
+lightning_logs/
