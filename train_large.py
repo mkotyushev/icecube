@@ -11,6 +11,7 @@ from pytorch_lightning.strategies.ddp import DDPStrategy
 from graphnet.data.sqlite.sqlite_dataset import SQLiteDataset, SQLiteDatasetMaxNPulses
 
 from icecube_utils import (
+    OneOfTransform,
     RotateAngleTransform,
     train_dynedge_blocks,
     train_dynedge_from_scratch,
@@ -80,14 +81,14 @@ config = {
         "run_name_tag": 'my_example',
         "batch_size": 100,
         "accumulate_grad_batches": 1,
-        "num_workers": 8,
+        "num_workers": 10,
         "target": 'angles_sincos_euclidean',
         # "target": 'direction',
         "early_stopping_patience": 30,
         "fit": {
             "max_epochs": 10,
             "gpus": [0],
-            "distribution_strategy": 'auto',
+            "distribution_strategy": DDPStrategy(find_unused_parameters=False),
             "precision": 16, 
             "log_every_n_steps": 50,
             "val_check_interval": 0.2,

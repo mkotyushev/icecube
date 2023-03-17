@@ -1465,33 +1465,28 @@ def rotate(v, k, angle):
     )
 
 
-def rotate_azimuth(x, y, z, angle):
+def rotate_azimuth(v, angle):
     """Rotate vectors given by coordinates x, y, z 
     by azimuth angle ~ around z-axis by angle (right-hand rule).
-    x, y, z: batch of 3D vectors to rotate, shape (B,) each
+    v: batch of 3D vectors to rotate, shape (B, 3)
     angle: rotation angle in radians, shape (1,)
     """
-    v = np.stack([x, y, z], axis=-1)  # B x 3
     k = np.array([0, 0, 1])  # 3
     v_new = rotate(v, k, angle)  # B x 3
-    return v_new[:, 0], v_new[:, 1], v_new[:, 2]
+    return v_new
 
 
-def rotate_zenith(x, y, z, w, angle):
+def rotate_zenith(v, w1, w2, angle):
     """Rotate vectors given by coordinates x, y, z 
     by zenith angle (right-hand rule).
-    x, y, z: batch of 3D vectors to rotate, shape (B,) each
-    w: base vector of current direction, shape (3,)
+    v: batch of 3D vectors to rotate, shape (B, 3)
+    w1, w2: base vector of current direction, shape (3,) each
     angle: rotation angle in radians, shape (1,)
     """
-    v = np.stack([x, y, z], axis=-1)  # B x 3
-    k = np.cross(
-        w,
-        np.array([0, 0, 1])
-    )  # 3
+    k = np.cross(w1, w2)  # 3
     k = k / np.linalg.norm(k, ord=2)
     v_new = rotate(v, k, angle)
-    return v_new[:, 0], v_new[:, 1], v_new[:, 2]
+    return v_new
 
 
 class RotateAngleTransform(RandomTransform):
@@ -1499,41 +1494,53 @@ class RotateAngleTransform(RandomTransform):
     def __init__(self, features, p, angle):
         super().__init__(features, p)
         self.angle = angle
-        self.feature_to_index = {feature: i for i, feature in enumerate(features)}
 
-    def transform(self, input, target=None):
-        x, y, z = \
-            input[:, self.feature_to_index['x']], \
-            input[:, self.feature_to_index['y']], \
-            input[:, self.feature_to_index['z']]
+        # TODO: make it more general
+        assert self.feature_to_index['x'] == 0
+        assert self.feature_to_index['y'] == 1
+        assert self.feature_to_index['z'] == 2
+
+    def transform(self, input, target):
+        assert target is not None, 'Target is required for rotation'
+        v = input[:, :3]
 
         if self.angle == 'azimuth':
-            additional_angle = np.random.rand() * 2 * np.pi
-            input[:, self.feature_to_index['x']], \
-            input[:, self.feature_to_index['y']], \
-            input[:, self.feature_to_index['z']] = rotate_azimuth(x, y, z, additional_angle)
+            azimuth = target['azimuth']
+            new_azimuth = np.random.rand() * 2 * np.pi
+            if np.isclose(azimuth, new_azimuth):
+                return input, target
+            
+            angle = new_azimuth - azimuth
+            k = np.array([0, 0, 1])
 
-            if target is not None:
-                azimuth, zenith = target['azimuth'], target['zenith']
-                azimuth = (azimuth + additional_angle) % (2 * np.pi)
-                target['azimuth'], target['zenith'] = azimuth, zenith
+            target['azimuth'] = new_azimuth
         elif self.angle == 'zenith':
-            additional_angle = np.random.rand() * np.pi
-            w = np.array(angles_to_xyz(target['azimuth'], target['zenith']))
-            input[:, self.feature_to_index['x']], \
-            input[:, self.feature_to_index['y']], \
-            input[:, self.feature_to_index['z']] = rotate_zenith(
-                x, y, z, w, additional_angle
-            )
+            zenith, azimuth = target['zenith'], target['azimuth']
+            new_zenith = np.random.rand() * np.pi
+            if np.isclose(zenith, new_zenith):
+                return input, target
 
-            if target is not None:
-                azimuth, zenith = target['azimuth'], target['zenith']
-                zenith += additional_angle
-                if zenith > np.pi:
-                    zenith = 2 * np.pi - zenith
-                    azimuth += np.pi
-                    if azimuth > 2 * np.pi:
-                        azimuth -= 2 * np.pi
-                target['azimuth'], target['zenith'] = azimuth, zenith
+            angle = new_zenith - zenith
+
+            # Distinct vectors in a plane of rotation
+            w1 = np.array(angles_to_xyz(azimuth, zenith))
+            w2 = np.array(angles_to_xyz(azimuth, zenith + angle / 2))
+            k = np.cross(w1, w2)
+            k = k / np.linalg.norm(k, ord=2)
+
+            target['zenith'] = new_zenith
+
+        v = rotate(v, k, angle)
+        input = np.concatenate((v, input[:, 3:]), axis=1)
 
         return input, target
+
+
+class OneOfTransform:
+    """Apply one of transforms"""
+    def __init__(self, transforms):
+        self.transforms = transforms
+
+    def transform(self, input, target=None):
+        transform = np.random.choice(self.transforms)
+        return transform.transform(input, target)
