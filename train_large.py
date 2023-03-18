@@ -57,6 +57,7 @@ def seed_everything(seed: int):
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+    torch.set_float32_matmul_precision('medium')
 
 
 def first_last_pulse_index_to_loss_weight(first_last_pulse_index):
