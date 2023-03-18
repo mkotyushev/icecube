@@ -172,9 +172,6 @@ if __name__ == '__main__':
     else:
         config['train_transforms'] = []
 
-    if args.state_dict_path is not None and args.state_dict_path.suffix == '.ckpt':
-        config['fit']['ckpt_path'] = args.state_dict_path
-
     wandb_logger = WandbLogger(
         project='icecube',
         save_dir='./wandb',
@@ -182,6 +179,17 @@ if __name__ == '__main__':
     )
     wandb_logger.experiment.config.update(config, allow_val_change=True)
     config['fit']['logger'] = wandb_logger
+
+    # Continue traininig: set trainer state
+    # only if WANDB_RESUME env var is set to 'must'
+    # otherwise, the model will be initialized with checkpoint,
+    # but trainer state will be reset
+    if (
+        args.state_dict_path is not None and 
+        args.state_dict_path.suffix == '.ckpt' and 
+        os.environ['WANDB_RESUME'] == 'must'
+    ):
+        config['fit']['ckpt_path'] = args.state_dict_path
     
     if args.n_blocks is not None:
         config['fit']['distribution_strategy'] = 'auto'
