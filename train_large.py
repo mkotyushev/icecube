@@ -89,7 +89,7 @@ config = {
             "max_epochs": 10,
             "gpus": [0],
             "distribution_strategy": DDPStrategy(find_unused_parameters=False),
-            "precision": 16, 
+            "precision": '16-mixed', 
             "log_every_n_steps": 50,
             "val_check_interval": 0.2,
             # "limit_train_batches": 100,
