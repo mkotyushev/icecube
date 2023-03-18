@@ -187,6 +187,7 @@ if __name__ == '__main__':
     if (
         args.state_dict_path is not None and 
         args.state_dict_path.suffix == '.ckpt' and 
+        'WANDB_RESUME' in os.environ and 
         os.environ['WANDB_RESUME'] == 'must'
     ):
         config['fit']['ckpt_path'] = args.state_dict_path
