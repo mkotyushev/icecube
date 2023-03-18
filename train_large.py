@@ -43,6 +43,8 @@ def parse_args():
         default='small'
     )
     parser.add_argument('--n-blocks', type=int, default=None)
+    parser.add_argument('--zero-new-block', action='store_true')
+    parser.add_argument('--block-output-aggregation', type=str, choices=['mean', 'sum'], default='mean')
     parser.add_argument('--enable-augmentations', action='store_true')
     parser.add_argument('--lr-onecycle-factors', type=float, nargs=3, default=[1e-02, 1, 1e-02])
     args = parser.parse_args()
@@ -120,6 +122,8 @@ config = {
         },
         'dataset_class': SQLiteDataset,
         # 'dataset_class': SQLiteDatasetMaxNPulses,
+        'zero_new_block': False,
+        'block_output_aggregation': 'mean',
 }
 
 
@@ -174,6 +178,10 @@ if __name__ == '__main__':
         ]
     else:
         config['train_transforms'] = []
+
+    # Zero new block after adding
+    config['zero_new_block'] = args.zero_new_block
+    config['block_output_aggregation'] = args.block_output_aggregation
 
     wandb_logger = WandbLogger(
         project='icecube',

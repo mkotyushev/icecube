@@ -1061,9 +1061,20 @@ def calculate_angular_error(df : pd.DataFrame) -> pd.DataFrame:
 
 
 class BlockLinear(Module):
+    output_aggregation = 'sum'
+
     """Block linear layer"""
-    def __init__(self, in_features: int, out_features: int, bias: bool = True,
-                 device=None, dtype=None, block_sizes=None, type='intermediate', input_transform=None) -> None:
+    def __init__(
+        self, 
+        in_features: int, 
+        out_features: int, 
+        bias: bool = True,
+        device=None, 
+        dtype=None, 
+        block_sizes=None, 
+        type='intermediate', 
+        input_transform=None,
+    ) -> None:
         super().__init__()
 
         if block_sizes is None:
@@ -1139,15 +1150,11 @@ class BlockLinear(Module):
         self.freeze_first_n_blocks(len(self.linears) - 1)
         return self
 
-    def zero_last_block(self):
-        """Zeros last block"""
-        self.linears[-1].weight.data.zero_()
-        if self.linears[-1].bias is not None:
-            self.linears[-1].bias.data.zero_()
-        return self
-
-    def add_block(self, in_features_block: int, out_features_block: int):
+    def add_block(self, in_features_block: int, out_features_block: int, init: str = 'xavier_uniform'):
         """Adds a new block"""
+        assert init in ['xavier_uniform', 'zero'], \
+            "init must be one of ['xavier_uniform', 'zero']"
+
         linear = Linear(
             in_features_block, 
             out_features_block, 
@@ -1157,13 +1164,13 @@ class BlockLinear(Module):
         )
         self.linears.append(linear)
 
-        # Re-normalize weights of existing blocks
-        scale = (len(self.linears) - 1) / len(self.linears)
-        with torch.no_grad():
-            for linear in self.linears[:-1]:
-                linear.weight.data *= scale
-                if linear.bias is not None:
-                    linear.bias.data *= scale
+        # # Re-normalize weights of existing blocks
+        # scale = (len(self.linears) - 1) / len(self.linears)
+        # with torch.no_grad():
+        #     for linear in self.linears[:-1]:
+        #         linear.weight.data *= scale
+        #         if linear.bias is not None:
+        #             linear.bias.data *= scale
 
         if self.type != 'input':
             self.in_features += in_features_block
@@ -1171,10 +1178,13 @@ class BlockLinear(Module):
             self.out_features += out_features_block
 
         # reinitialize added layer weights to match current in_features
-        bound = 1 / math.sqrt(self.in_features)
-        torch.nn.init.uniform_(linear.weight, -bound, bound)
-        if linear.bias is not None:
-            torch.nn.init.uniform_(linear.bias, -bound, bound)
+        if init == 'zero':
+            linear.weight.data.zero_()
+            if linear.bias is not None:
+                linear.bias.data.zero_()
+        elif init == 'xavier_uniform':
+            # Default initialization is xavier_uniform
+            pass
 
         return self
 
@@ -1200,7 +1210,15 @@ class BlockLinear(Module):
             x = torch.split(x, in_sizes, dim=1)
             assert len(x) == len(self.linears)
             x = torch.stack([linear(x_) for linear, x_ in zip(self.linears, x)], dim=0)
-            x = torch.sum(x, dim=0)
+            if BlockLinear.output_aggregation == 'mean':
+                x = torch.mean(x, dim=0)
+            elif BlockLinear.output_aggregation == 'sum':
+                x = torch.sum(x, dim=0)
+            else:
+                raise ValueError(
+                    f"BlockLinear.output_aggregation must be one of ['mean', 'sum'], "
+                    f'got {BlockLinear.output_aggregation}'
+                )
         # block-diagonal
         else:
             in_sizes = [linear.in_features for linear in self.linears]
@@ -1253,6 +1271,12 @@ def readout_input_view(x, n_blocks):
     return permute_cat_block_output(x, 3, n_blocks)
 
 
+def print_layer_norms(model):
+    for name, module in model.named_modules():
+        if isinstance(module, BlockLinear):
+            print(name, torch.norm(module.weight))
+
+
 def train_dynedge_blocks(
     config: Dict[str, Any], 
     n_blocks: int, 
@@ -1268,6 +1292,7 @@ def train_dynedge_blocks(
 
     # Build empty block model
     train_dataloader, validate_dataloader = make_dataloaders(config=config)
+    BlockLinear.output_aggregation = config['block_output_aggregation']
     with patch('torch.nn.Linear', BlockLinear):
         model = build_model(config, train_dataloader)
 
@@ -1313,7 +1338,7 @@ def train_dynedge_blocks(
         if isinstance(module, BlockLinear):
             if name == '_gnn._conv_layers.0.nn.0':
                 module.set_type('input')
-            elif name == '_tasks.0._affine':
+            elif name.startswith('_tasks') and name.endswith('_affine'):
                 module.set_type('output')
             
             if name == '_gnn._post_processing.0':
@@ -1334,18 +1359,11 @@ def train_dynedge_blocks(
 
     # Train n_blocks - 1 blocks additionaly to first one
     for i in range(n_blocks - 1):
-        for name, module in model.named_modules():
-            if isinstance(module, BlockLinear):
-                print(torch.norm(module.weight))
+        print_layer_norms(model)
+
         # Add block and freeze all the previous blocks
         for name, module in model.named_modules(): 
             if isinstance(module, BlockLinear):
-                name = name.replace('_orig_mod.', '')
-
-                # Task layer is handled separately
-                if name.startswith('_tasks') and name.endswith('_affine'):
-                    continue
-
                 in_features_block, out_features_block = initial_linear_block_sizes[name]
                 
                 if name == '_gnn._post_processing.0':
@@ -1354,30 +1372,29 @@ def train_dynedge_blocks(
                 with torch.no_grad():
                     module.add_block(
                         in_features_block=in_features_block, 
-                        out_features_block=out_features_block
+                        out_features_block=out_features_block,
+                        init='zero' if config['zero_new_block'] else 'xavier_uniform'
                     )
-                    # module.zero_last_block()
                     module.freeze_except_last_block()
         
-        # Replace the task layers with simple freshly initalized 
-        # linear layers of suitable in_features
-        for i in range(len(model._tasks)):
-            model._tasks[i]._affine = BlockLinear(
-                in_features=
-                    model._tasks[i]._affine.in_features + 
-                    initial_linear_block_sizes[f'_tasks.{i}._affine'][0],
-                out_features=model._tasks[i]._affine.out_features,
-                bias=model._tasks[i]._affine.bias is not None,
-                device=model._tasks[i]._affine.weight.device,
-                dtype=model._tasks[i]._affine.weight.dtype,
-                block_sizes=None,
-                # intermediate here is on purpose so as it is simple linear layer
-                type='intermediate',
-                input_transform=None
-            )
-
-        # with torch.no_grad():
-        #     model(next(iter(train_dataloader)))
+        print_layer_norms(model)
+        
+        # # Replace the task layers with simple freshly initalized 
+        # # linear layers of suitable in_features
+        # for i in range(len(model._tasks)):
+        #     model._tasks[i]._affine = BlockLinear(
+        #         in_features=
+        #             model._tasks[i]._affine.in_features + 
+        #             initial_linear_block_sizes[f'_tasks.{i}._affine'][0],
+        #         out_features=model._tasks[i]._affine.out_features,
+        #         bias=model._tasks[i]._affine.bias is not None,
+        #         device=model._tasks[i]._affine.weight.device,
+        #         dtype=model._tasks[i]._affine.weight.dtype,
+        #         block_sizes=None,
+        #         # intermediate here is on purpose so as it is simple linear layer
+        #         type='intermediate',
+        #         input_transform=None
+        #     )
 
         # Train
         model = train_dynedge(
