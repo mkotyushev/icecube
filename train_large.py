@@ -11,11 +11,12 @@ from pytorch_lightning.strategies.ddp import DDPStrategy
 from graphnet.data.sqlite.sqlite_dataset import SQLiteDataset, SQLiteDatasetMaxNPulses
 
 from icecube_utils import (
+    OneOfTransform,
+    RotateAngleTransform,
     train_dynedge_blocks,
     train_dynedge_from_scratch,
     FlipTimeTransform,
-    FlipCoordinateTransform,
-    RotateAngleTransform,
+    FlipCoordinateTransform
 )
 
 
@@ -43,7 +44,7 @@ def parse_args():
     )
     parser.add_argument('--n-blocks', type=int, default=None)
     parser.add_argument('--enable-augmentations', action='store_true')
-    
+    parser.add_argument('--lr-onecycle-factors', type=float, nargs=3, default=[1e-02, 1, 1e-02])
     args = parser.parse_args()
     return args
 
@@ -64,40 +65,42 @@ def first_last_pulse_index_to_loss_weight(first_last_pulse_index):
 
 
 features = FEATURES.KAGGLE
-truth = TRUTH.KAGGLE
+truth = ['zenith', 'azimuth']
 
 config = {
-        "path": '/workspace/icecube/data/batch_14.db',
-        "inference_database_path": '/workspace/icecube/data/batch_656.db',
-        # "path": '/workspace/data/fold_0.db',
-        # "inference_database_path": '/workspace/data/fold_0_val.db',
+        # "path": '/workspace/icecube/data/batch_1.db',
+        # "inference_database_path": '/workspace/icecube/data/batch_51.db',
+        "path": '/workspace/icecube/data/fold_0.db',
+        "inference_database_path": '/workspace/icecube/data/fold_0_val.db',
         "pulsemap": 'pulse_table',
         "truth_table": 'meta_table',
         "features": features,
         "truth": truth,
+        # "tasks_weights": [0.75, 0.25],
         "index_column": 'event_id',
         "run_name_tag": 'my_example',
         "batch_size": 100,
         "accumulate_grad_batches": 1,
         "num_workers": 10,
-        "target": 'direction',
+        "target": 'angles_sincos_euclidean',
+        # "target": 'direction',
         "early_stopping_patience": 5,
         "fit": {
             "max_epochs": 10,
             "gpus": [0],
             "distribution_strategy": DDPStrategy(find_unused_parameters=False),
-            "precision": 16, 
+            "precision": '16-mixed', 
             "log_every_n_steps": 50,
             "val_check_interval": 0.2,
-            "limit_train_batches": 100,
-            "limit_val_batches": 100,
-            "profiler": "simple",
+            # "limit_train_batches": 100,
+            # "limit_val_batches": 100,
+            # "profiler": "simple",
             # "profiler": AdvancedProfiler(dirpath=".", filename="perf_logs"),
         },
         'base_dir': 'training',
-        'bias': False,
+        'bias': True,
         'dynedge': {},
-        'shuffle_train': False,
+        'shuffle_train': True,
         'optimizer_kwargs': {
             "lr": 1e-03, 
             "eps": 1e-03
@@ -138,12 +141,14 @@ if __name__ == '__main__':
     elif args.mode == 'large_contd':
         config['fit']['val_check_interval'] = 0.1
         config['fit']['max_steps'] = -1
-        config['scheduler_kwargs']['factors'] = [1e-02, 5e-03, 1e-03]
     elif args.mode == 'small':
-        config['fit']['val_check_interval'] = 1.0
+        config['fit']['val_check_interval'] = 0.5
         config['fit']['max_steps'] = -1
     else:
         raise ValueError(f'Unknown mode {args.mode}')
+
+    # Set LR one-cycle factors
+    config['scheduler_kwargs']['factors'] = args.lr_onecycle_factors
     
     # Convert patience from epochs to validation checks
     config['early_stopping_patience'] = \
@@ -157,16 +162,14 @@ if __name__ == '__main__':
             'loss_weight_transform': first_last_pulse_index_to_loss_weight,
         }
 
-    # TODO: fix z-axes related transforms
-    # or check if large loss is normal behavior 
     if args.enable_augmentations:
         config['train_transforms'] = [
             # FlipTimeTransform(features=features, p=0.5), 
             FlipCoordinateTransform(features=features, p=0.5, coordinate='x'),
             FlipCoordinateTransform(features=features, p=0.5, coordinate='y'),
-            # FlipCoordinateTransform(features=features, p=0.5, coordinate='z'),
+            FlipCoordinateTransform(features=features, p=0.5, coordinate='z'),
+            RotateAngleTransform(features=features, p=0.5, angle='zenith'),
             RotateAngleTransform(features=features, p=0.5, angle='azimuth'),
-            # RotateAngleTransform(features=features, p=0.5, angle='zenith'),
         ]
     else:
         config['train_transforms'] = []
@@ -176,11 +179,23 @@ if __name__ == '__main__':
         save_dir='./wandb',
         log_model=False,
     )
-    wandb_logger.experiment.config.update(config)
+    wandb_logger.experiment.config.update(config, allow_val_change=True)
     config['fit']['logger'] = wandb_logger
+
+    # Continue traininig: set trainer state
+    # only if WANDB_RESUME env var is set to 'must'
+    # otherwise, the model will be initialized with checkpoint,
+    # but trainer state will be reset
+    if (
+        args.state_dict_path is not None and 
+        args.state_dict_path.suffix == '.ckpt' and 
+        'WANDB_RESUME' in os.environ and 
+        os.environ['WANDB_RESUME'] == 'must'
+    ):
+        config['fit']['ckpt_path'] = args.state_dict_path
     
     if args.n_blocks is not None:
-        config['fit']['distribution_strategy'] = None
+        config['fit']['distribution_strategy'] = 'auto'
         model = train_dynedge_blocks(
             config, 
             args.n_blocks, 
@@ -193,5 +208,4 @@ if __name__ == '__main__':
             state_dict_path=None if args.state_dict_path is None else str(args.state_dict_path)
         )
 
-    model.save(str(args.model_save_dir / 'model.pth'))
     model.save_state_dict(str(args.model_save_dir / 'state_dict.pth'))

@@ -24,9 +24,9 @@ from graphnet.models import StandardModel
 from graphnet.models.detector.icecube import IceCubeKaggle
 from graphnet.models.gnn import DynEdge
 from graphnet.models.graph_builders import KNNGraphBuilder
-from graphnet.models.task.reconstruction import DirectionReconstructionWithKappa
+from graphnet.models.task.reconstruction import AngleReconstructionCos, AngleReconstructionSinCos, AngleReconstructionSincosWithKappa, AzimuthReconstruction, AzimuthReconstructionWithKappa, DirectionReconstruction, DirectionReconstructionWithKappa, ZenithAzimuthReconstruction, ZenithReconstructionWithKappa
 from graphnet.training.callbacks import ProgressBar, PiecewiseLinearLR
-from graphnet.training.loss_functions import VonMisesFisher3DLoss
+from graphnet.training.loss_functions import CosineLoss, CosineLoss3D, EuclidianDistanceLossCos, EuclidianDistanceLossSinCos, VonMisesFisher2DLoss, VonMisesFisher2DLossSinCos, VonMisesFisher3DLoss
 from graphnet.training.labels import Direction
 from graphnet.training.utils import make_dataloader
 from graphnet.utilities.logging import get_logger
@@ -51,9 +51,6 @@ from wasserstein_ensemble import (
 
 
 # Constants
-features = FEATURES.KAGGLE
-truth = TRUTH.KAGGLE
-
 logger = get_logger()
 
 
@@ -75,6 +72,7 @@ def build_model(
         **config['dynedge']
     )
 
+    tasks = []
     if config["target"] == 'direction':
         task = DirectionReconstructionWithKappa(
             hidden_size=gnn.nb_outputs,
@@ -84,16 +82,198 @@ def build_model(
             bias=config['bias'],
             fix_points=fix_points,
         )
+        tasks.append(task)
         prediction_columns = [config["target"] + "_x", 
                               config["target"] + "_y", 
                               config["target"] + "_z", 
                               config["target"] + "_kappa" ]
         additional_attributes = ['zenith', 'azimuth', 'event_id']
+    elif config["target"] == 'angles_legacy':
+        task = ZenithReconstructionWithKappa(
+            hidden_size=gnn.nb_outputs,
+            target_labels=config['truth'][0],
+            loss_function=VonMisesFisher2DLoss(),
+            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            bias=config['bias'],
+            fix_points=fix_points,
+        )
+        tasks.append(task)
+        task = AzimuthReconstructionWithKappa(
+            hidden_size=gnn.nb_outputs,
+            target_labels=config['truth'][1],
+            loss_function=VonMisesFisher2DLoss(),
+            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            bias=config['bias'],
+            fix_points=fix_points,
+        )
+        tasks.append(task)
+        prediction_columns = [config['truth'][0] + '_pred', 
+                              config['truth'][0] + '_kappa',
+                              config['truth'][1] + '_pred', 
+                              config['truth'][1] + '_kappa']
+        additional_attributes = [*config['truth'], 'event_id']
+    elif config["target"] == 'angles':
+        task = ZenithAzimuthReconstruction(
+            hidden_size=gnn.nb_outputs,
+            target_labels=config['truth'],
+            loss_function=CosineLoss(),
+            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            bias=config['bias'],
+            fix_points=fix_points,
+        )
+        tasks.append(task)
+        prediction_columns = [config['truth'][0] + '_pred', 
+                              config['truth'][1] + '_pred']
+        additional_attributes = [*config['truth'], 'event_id']
+    # elif config["target"] == 'angles_from_3d':
+    #     task = ZenithAzimuthReconstructionFrom3D(
+    #         hidden_size=gnn.nb_outputs,
+    #         target_labels=truth,
+    #         loss_function=CosineLoss(),
+    #         loss_weight='loss_weight' if 'loss_weight' in config else None,
+    #         bias=config['bias'],
+    #         fix_points=fix_points,
+    #     )
+    #     tasks.append(task)
+    #     prediction_columns = [truth[0] + '_pred', 
+    #                           truth[1] + '_pred']
+    #     additional_attributes = [*truth, 'event_id']
+    elif config["target"] == 'angles_sincos':
+        task = AngleReconstructionSincosWithKappa(
+            half=True,
+            hidden_size=gnn.nb_outputs,
+            target_labels=config['truth'][0],
+            loss_function=VonMisesFisher2DLossSinCos(),
+            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            bias=config['bias'],
+            fix_points=fix_points,
+        )
+        tasks.append(task)
+        task = AngleReconstructionSincosWithKappa(
+            half=False,
+            hidden_size=gnn.nb_outputs,
+            target_labels=config['truth'][1],
+            loss_function=VonMisesFisher2DLossSinCos(),
+            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            bias=config['bias'],
+            fix_points=fix_points,
+        )
+        tasks.append(task)
+        prediction_columns = [
+            config['truth'][0] + '_sin', 
+            config['truth'][0] + '_cos',
+            config['truth'][0] + '_kappa',
+            config['truth'][1] + '_sin', 
+            config['truth'][1] + '_cos',
+            config['truth'][1] + '_kappa',
+        ]
+        additional_attributes = [*config['truth'], 'event_id']
+    elif config["target"] == 'angles_sincos_euclidean':
+        task = AngleReconstructionSinCos(
+            half=True,
+            hidden_size=gnn.nb_outputs,
+            target_labels=config['truth'][0],
+            loss_function=EuclidianDistanceLossSinCos(),
+            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            bias=config['bias'],
+            fix_points=fix_points,
+        )
+        tasks.append(task)
+        task = AngleReconstructionSinCos(
+            half=False,
+            hidden_size=gnn.nb_outputs,
+            target_labels=config['truth'][1],
+            loss_function=EuclidianDistanceLossSinCos(),
+            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            bias=config['bias'],
+            fix_points=fix_points,
+        )
+        tasks.append(task)
+        prediction_columns = [
+            config['truth'][0] + '_sin', 
+            config['truth'][0] + '_cos',
+            config['truth'][1] + '_sin', 
+            config['truth'][1] + '_cos',
+        ]
+        additional_attributes = [*config['truth'], 'event_id']
+    elif config["target"] == 'zenith_sincos_euclidean':
+        task = AngleReconstructionSinCos(
+            half=True,
+            hidden_size=gnn.nb_outputs,
+            target_labels=config['truth'][0],
+            loss_function=EuclidianDistanceLossSinCos(),
+            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            bias=config['bias'],
+            fix_points=fix_points,
+        )
+        tasks.append(task)
+        prediction_columns = [
+            config['truth'][0] + '_sin', 
+            config['truth'][0] + '_cos',
+        ]
+        additional_attributes = [*config['truth'], 'event_id']
+    elif config["target"] == 'zenith_cos_euclidean':
+        task = AngleReconstructionCos(
+            hidden_size=gnn.nb_outputs,
+            target_labels=config['truth'][0],
+            loss_function=EuclidianDistanceLossCos(),
+            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            bias=config['bias'],
+            fix_points=fix_points,
+        )
+        tasks.append(task)
+        prediction_columns = [
+            config['truth'][0] + '_cos',
+        ]
+        additional_attributes = [*config['truth'], 'event_id']
+    elif config["target"] == 'zenith':
+        task = ZenithReconstructionWithKappa(
+            hidden_size=gnn.nb_outputs,
+            target_labels=config['truth'][0],
+            loss_function=VonMisesFisher2DLoss(),
+            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            bias=config['bias'],
+            fix_points=fix_points,
+        )
+        tasks.append(task)
+        prediction_columns = [config['truth'][0] + '_pred', 
+                              config['truth'][0] + '_kappa']
+        additional_attributes = [*config['truth'], 'event_id']
+    elif config["target"] == 'azimuth':
+        task = ZenithReconstructionWithKappa(
+            hidden_size=gnn.nb_outputs,
+            target_labels=config['truth'][1],
+            loss_function=VonMisesFisher2DLoss(),
+            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            bias=config['bias'],
+            fix_points=fix_points,
+        )
+        tasks.append(task)
+        prediction_columns = [config['truth'][1] + '_pred', 
+                              config['truth'][1] + '_kappa']
+        additional_attributes = [*config['truth'], 'event_id']
+    elif config["target"] == 'direction_cosine':
+        task = DirectionReconstruction(
+            hidden_size=gnn.nb_outputs,
+            target_labels=config['truth'],
+            loss_function=CosineLoss3D(),
+            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            bias=config['bias'],
+            fix_points=fix_points,
+        )
+        tasks.append(task)
+        prediction_columns = [
+            'direction_x', 
+            'direction_y',
+            'direction_z',
+        ]
+        additional_attributes = [*config['truth'], 'event_id']
 
     model = StandardModel(
         detector=detector,
         gnn=gnn,
-        tasks=[task],
+        tasks=tasks,
+        tasks_weiths=config["tasks_weights"] if "tasks_weights" in config else None,
         optimizer_class=AdamW,
         optimizer_kwargs=config["optimizer_kwargs"],
         scheduler_class=PiecewiseLinearLR,
@@ -116,20 +296,34 @@ def build_model(
 
 def load_pretrained_model(
     config: Dict[str,Any], 
-    state_dict_path: str = '/kaggle/input/dynedge-pretrained/dynedge_pretrained_batch_1_to_50/state_dict.pth',
+    path: str = '/kaggle/input/dynedge-pretrained/dynedge_pretrained_batch_1_to_50/state_dict.pth',
     return_train_dataloader: bool = False
 ) -> StandardModel:
     train_dataloader, _ = make_dataloaders(config = config)
-    model = build_model(config = config, 
-                        train_dataloader = train_dataloader)
-    #model._inference_trainer = Trainer(config['fit'])
-    print(model.state_dict().keys())
-    model.load_state_dict(state_dict_path)
-    model.prediction_columns = [config["target"] + "_x", 
-                              config["target"] + "_y", 
-                              config["target"] + "_z", 
-                              config["target"] + "_kappa" ]
-    model.additional_attributes = ['zenith', 'azimuth', 'event_id']
+    
+    if path.endswith('model.pth'):
+        logger.info(f'Loading model from {path}')
+        model = StandardModel.load(path)
+    else:
+        model = build_model(config = config, 
+                            train_dataloader = train_dataloader)
+        #model._inference_trainer = Trainer(config['fit'])
+        logger.info(f'Current model state dict keys: {model.state_dict().keys()}')
+
+        if path.endswith('.ckpt'):
+            logger.info(f'Loading checkpoint from {path}')
+            model = StandardModel.load_from_checkpoint(
+                path, 
+                detector=model._detector, 
+                gnn=model._gnn, 
+                tasks=[task for task in model._tasks]
+            )
+        elif path.endswith('.pth'):
+            logger.info(f'Loading state dict from {path}')
+            state_dict = torch.load(path)
+            model.load_state_dict(state_dict)
+        else:
+            raise ValueError(f'path must be a .pth or .ckpt file, got {path}')
 
     if return_train_dataloader:
         return model, train_dataloader
@@ -149,12 +343,12 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
         db = config['path'],
         selection = None,
         pulsemaps = config['pulsemap'],
-        features = features,
-        truth = truth,
+        features = config['features'],
+        truth = config['truth'],
         batch_size = config['batch_size'],
         num_workers = config['num_workers'],
         shuffle = config['shuffle_train'],
-        labels = {'direction': Direction()},
+        labels = {'direction': Direction(azimuth_key=config['truth'][1], zenith_key=config['truth'][0])},
         index_column = config['index_column'],
         truth_table = config['truth_table'],
         transforms = config['train_transforms'],
@@ -167,12 +361,12 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
         db = config['inference_database_path'],
         selection = None,
         pulsemaps = config['pulsemap'],
-        features = features,
-        truth = truth,
+        features = config['features'],
+        truth = config['truth'],
         batch_size = config['batch_size'],
         num_workers = config['num_workers'],
         shuffle = False,
-        labels = {'direction': Direction()},
+        labels = {'direction': Direction(azimuth_key=config['truth'][1], zenith_key=config['truth'][0])},
         index_column = config['index_column'],
         truth_table = config['truth_table'],
         max_n_pulses=config['max_n_pulses']['max_n_pulses'],
@@ -182,6 +376,9 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
 
 
 def train_dynedge(model, config, train_dataloader, validate_dataloader):
+    # Compile model
+    torch.compile(model)
+
     # Training model
     callbacks = [
         LearningRateMonitor(logging_interval="step"),
@@ -237,12 +434,12 @@ def inference(model, config: Dict[str, Any]) -> pd.DataFrame:
     test_dataloader = make_dataloader(db = config['inference_database_path'],
                                             selection = None, # Entire database
                                             pulsemaps = config['pulsemap'],
-                                            features = features,
-                                            truth = truth,
+                                            features = config['features'],
+                                            truth = config['truth'],
                                             batch_size = config['batch_size'],
                                             num_workers = config['num_workers'],
                                             shuffle = False,
-                                            labels = {'direction': Direction()},
+                                            labels = {'direction': Direction(azimuth_key=config['truth'][1], zenith_key=config['truth'][0])},
                                             index_column = config['index_column'],
                                             truth_table = config['truth_table'],
                                             max_n_pulses = config['max_n_pulses']['max_n_pulses'],
@@ -256,6 +453,7 @@ def inference(model, config: Dict[str, Any]) -> pd.DataFrame:
             dataloader = test_dataloader,
             prediction_columns=model.prediction_columns,
             additional_attributes=model.additional_attributes,
+            distribution_strategy='auto'
         )
     # Save predictions and model to file
     archive = os.path.join(config['base_dir'], "train_model_without_configs")
@@ -838,6 +1036,26 @@ def convert_to_3d(df: pd.DataFrame) -> pd.DataFrame:
 
 def calculate_angular_error(df : pd.DataFrame) -> pd.DataFrame:
     """Calcualtes the opening angle (angular error) between true and reconstructed direction vectors"""
+    if 'direction_x' not in df.columns:
+        if 'azimuth_pred' not in df.columns:
+            # azimuth_pred = np.arctan2(df['azimuth_sin'], df['azimuth_cos'])
+            # zenith_pred = np.arctan2(df['zenith_sin'], df['zenith_cos'])
+            # df['direction_x'] = np.cos(azimuth_pred) * np.sin(zenith_pred)
+            # df['direction_y'] = np.sin(azimuth_pred) * np.sin(zenith_pred)
+            # df['direction_z'] = np.cos(zenith_pred)
+            
+            df['direction_x'] = df['azimuth_cos'] * df['zenith_sin']
+            df['direction_y'] = df['azimuth_sin'] * df['zenith_sin']
+            df['direction_z'] = df['zenith_cos']
+
+            norm = np.sqrt(df['direction_x']**2 + df['direction_y']**2 + df['direction_z']**2)
+            df['direction_x'] /= norm
+            df['direction_y'] /= norm
+            df['direction_z'] /= norm
+        else:
+            df['direction_x'] = np.cos(df['azimuth_pred']) * np.sin(df['zenith_pred'])
+            df['direction_y'] = np.sin(df['azimuth_pred']) * np.sin(df['zenith_pred'])
+            df['direction_z'] = np.cos(df['zenith_pred'])
     df['angular_error'] = np.arccos(df['true_x']*df['direction_x'] + df['true_y']*df['direction_y'] + df['true_z']*df['direction_z'])
     return df
 
@@ -1122,8 +1340,10 @@ def train_dynedge_blocks(
         # Add block and freeze all the previous blocks
         for name, module in model.named_modules(): 
             if isinstance(module, BlockLinear):
+                name = name.replace('_orig_mod.', '')
+
                 # Task layer is handled separately
-                if name == '_tasks.0._affine':
+                if name.startswith('_tasks') and name.endswith('_affine'):
                     continue
 
                 in_features_block, out_features_block = initial_linear_block_sizes[name]
@@ -1145,7 +1365,7 @@ def train_dynedge_blocks(
             model._tasks[i]._affine = BlockLinear(
                 in_features=
                     model._tasks[i]._affine.in_features + 
-                    initial_linear_block_sizes['_tasks.0._affine'][0],
+                    initial_linear_block_sizes[f'_tasks.{i}._affine'][0],
                 out_features=model._tasks[i]._affine.out_features,
                 bias=model._tasks[i]._affine.bias is not None,
                 device=model._tasks[i]._affine.weight.device,
@@ -1202,8 +1422,7 @@ def angles_to_xyz(azimuth, zenith):
 
 
 def xyz_to_angles(x, y, z):
-    norm = np.linalg.norm([x, y, z])
-    assert np.isclose(norm, 1)
+    norm = np.linalg.norm([x, y, z], ord=2)
     x, y, z = x / norm, y / norm, z / norm
 
     azimuth = np.arctan2(y, x)
@@ -1232,6 +1451,7 @@ class FlipTimeTransform(RandomTransform):
 
         return input, target
     
+
 class FlipCoordinateTransform(RandomTransform):
     """Flip one of axes transform"""
     def __init__(self, features, p, coordinate):
@@ -1256,14 +1476,45 @@ class FlipCoordinateTransform(RandomTransform):
         return input, target
 
 
-def rotate_azimuth(x, y, z, angle):
-    x, y, z = x * np.cos(angle) - y * np.sin(angle), x * np.sin(angle) + y * np.cos(angle), z
-    return x, y, z
+def rotate(v, k, angle):
+    """Rotate vectors v around axis k by angle (right-hand rule).
+    v: batch of 3D vectors to rotate, shape (B, 3)
+    k: 3D unit-vector, shape (3,)
+    angle: rotation angle in radians, shape (1,)
+    """
+    # https://en.wikipedia.org/wiki/Rodrigues%27_rotation_formula
+    assert np.isclose(np.linalg.norm(k, ord=2), 1.0)
+    k = k[None, :]  # 1 x 3
+    cos, sin = np.cos(angle), np.sin(angle)
+    return (
+        v * cos +  # B x 3
+        np.cross(k, v) * sin +  # B x 3
+        k * (np.dot(k, v.T)).T * (1 - cos)  # 1 x 3 * (1 x 3 . (B x 3).T).T = B x 3
+    )
 
 
-def rotate_zenith(x, y, z, angle):
-    x, y, z = x * np.cos(angle) - z * np.sin(angle), y, x * np.sin(angle) + z * np.cos(angle)
-    return x, y, z
+def rotate_azimuth(v, angle):
+    """Rotate vectors given by coordinates x, y, z 
+    by azimuth angle ~ around z-axis by angle (right-hand rule).
+    v: batch of 3D vectors to rotate, shape (B, 3)
+    angle: rotation angle in radians, shape (1,)
+    """
+    k = np.array([0, 0, 1])  # 3
+    v_new = rotate(v, k, angle)  # B x 3
+    return v_new
+
+
+def rotate_zenith(v, w1, w2, angle):
+    """Rotate vectors given by coordinates x, y, z 
+    by zenith angle (right-hand rule).
+    v: batch of 3D vectors to rotate, shape (B, 3)
+    w1, w2: base vector of current direction, shape (3,) each
+    angle: rotation angle in radians, shape (1,)
+    """
+    k = np.cross(w1, w2)  # 3
+    k = k / np.linalg.norm(k, ord=2)
+    v_new = rotate(v, k, angle)
+    return v_new
 
 
 class RotateAngleTransform(RandomTransform):
@@ -1271,38 +1522,53 @@ class RotateAngleTransform(RandomTransform):
     def __init__(self, features, p, angle):
         super().__init__(features, p)
         self.angle = angle
-        self.feature_to_index = {feature: i for i, feature in enumerate(features)}
 
-    def transform(self, input, target=None):
-        x, y, z = \
-            input[:, self.feature_to_index['x']], \
-            input[:, self.feature_to_index['y']], \
-            input[:, self.feature_to_index['z']]
+        # TODO: make it more general
+        assert self.feature_to_index['x'] == 0
+        assert self.feature_to_index['y'] == 1
+        assert self.feature_to_index['z'] == 2
+
+    def transform(self, input, target):
+        assert target is not None, 'Target is required for rotation'
+        v = input[:, :3]
 
         if self.angle == 'azimuth':
-            additional_angle = np.random.rand() * 2 * np.pi
-            input[:, self.feature_to_index['x']], \
-            input[:, self.feature_to_index['y']], \
-            input[:, self.feature_to_index['z']] = rotate_azimuth(x, y, z, additional_angle)
+            azimuth = target['azimuth']
+            new_azimuth = np.random.rand() * 2 * np.pi
+            if np.isclose(azimuth, new_azimuth):
+                return input, target
+            
+            angle = new_azimuth - azimuth
+            k = np.array([0, 0, 1])
 
-            if target is not None:
-                azimuth, zenith = target['azimuth'], target['zenith']
-                azimuth = (azimuth + additional_angle) % (2 * np.pi)
-                target['azimuth'], target['zenith'] = azimuth, zenith
+            target['azimuth'] = new_azimuth
         elif self.angle == 'zenith':
-            additional_angle = np.random.rand() * np.pi
-            input[:, self.feature_to_index['x']], \
-            input[:, self.feature_to_index['y']], \
-            input[:, self.feature_to_index['z']] = rotate_zenith(x, y, z, additional_angle)
+            zenith, azimuth = target['zenith'], target['azimuth']
+            new_zenith = np.random.rand() * np.pi
+            if np.isclose(zenith, new_zenith):
+                return input, target
 
-            if target is not None:
-                azimuth, zenith = target['azimuth'], target['zenith']
-                zenith += additional_angle
-                if zenith > np.pi:
-                    zenith = 2 * np.pi - zenith
-                    azimuth += np.pi
-                    if azimuth > 2 * np.pi:
-                        azimuth -= 2 * np.pi
-                target['azimuth'], target['zenith'] = azimuth, zenith
+            angle = new_zenith - zenith
+
+            # Distinct vectors in a plane of rotation
+            w1 = np.array(angles_to_xyz(azimuth, zenith))
+            w2 = np.array(angles_to_xyz(azimuth, zenith + angle / 2))
+            k = np.cross(w1, w2)
+            k = k / np.linalg.norm(k, ord=2)
+
+            target['zenith'] = new_zenith
+
+        v = rotate(v, k, angle)
+        input = np.concatenate((v, input[:, 3:]), axis=1)
 
         return input, target
+
+
+class OneOfTransform:
+    """Apply one of transforms"""
+    def __init__(self, transforms):
+        self.transforms = transforms
+
+    def transform(self, input, target=None):
+        transform = np.random.choice(self.transforms)
+        return transform.transform(input, target)

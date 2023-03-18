@@ -29,7 +29,7 @@ RUN \
     conda create --name graphnet python=3.8 gcc_linux-64 gxx_linux-64 libgcc cudatoolkit=11.7 -c conda-forge -y
 RUN /root/miniconda3/envs/graphnet/bin/python -m pip install --upgrade pip
 
-RUN /root/miniconda3/envs/graphnet/bin/pip install --default-timeout=1000 --extra-index-url https://download.pytorch.org/whl/cu117 torch==1.13+cu117 torchvision==0.14.0+cu117
+RUN /root/miniconda3/envs/graphnet/bin/pip install --default-timeout=1000 --extra-index-url https://download.pytorch.org/whl/cu117 torch==2.0.0+cu117 torchvision==0.15.0+cu117
 COPY ../requirements.txt .
 RUN /root/miniconda3/envs/graphnet/bin/pip install --default-timeout=1000 -r requirements.txt 
 RUN /root/miniconda3/envs/graphnet/bin/pip install matplotlib tables gpytorch tabulate seaborn mock
