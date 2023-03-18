@@ -44,7 +44,7 @@ def parse_args():
     )
     parser.add_argument('--n-blocks', type=int, default=None)
     parser.add_argument('--enable-augmentations', action='store_true')
-    
+    parser.add_argument('--lr-onecycle-factors', type=float, nargs=3, default=[1e-02, 1, 1e-02])
     args = parser.parse_args()
     return args
 
@@ -141,12 +141,14 @@ if __name__ == '__main__':
     elif args.mode == 'large_contd':
         config['fit']['val_check_interval'] = 0.1
         config['fit']['max_steps'] = -1
-        config['scheduler_kwargs']['factors'] = [1e-02, 5e-03, 1e-03]
     elif args.mode == 'small':
         config['fit']['val_check_interval'] = 0.5
         config['fit']['max_steps'] = -1
     else:
         raise ValueError(f'Unknown mode {args.mode}')
+
+    # Set LR one-cycle factors
+    config['scheduler_kwargs']['factors'] = args.lr_onecycle_factors
     
     # Convert patience from epochs to validation checks
     config['early_stopping_patience'] = \
