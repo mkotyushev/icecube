@@ -84,7 +84,7 @@ config = {
         "num_workers": 10,
         "target": 'angles_sincos_euclidean',
         # "target": 'direction',
-        "early_stopping_patience": 30,
+        "early_stopping_patience": 5,
         "fit": {
             "max_epochs": 10,
             "gpus": [0],
