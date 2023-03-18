@@ -206,5 +206,4 @@ if __name__ == '__main__':
             state_dict_path=None if args.state_dict_path is None else str(args.state_dict_path)
         )
 
-    model.save(str(args.model_save_dir / 'model.pth'))
     model.save_state_dict(str(args.model_save_dir / 'state_dict.pth'))
