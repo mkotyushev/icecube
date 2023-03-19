@@ -173,22 +173,24 @@ if __name__ == '__main__':
         }
 
     if args.enable_augmentations:
-        config['train_transforms'] = [
-            # FlipTimeTransform(features=features, p=0.5), 
-            FlipCoordinateTransform(features=features, p=0.5, coordinate='x'),
-            FlipCoordinateTransform(features=features, p=0.5, coordinate='y'),
-            FlipCoordinateTransform(features=features, p=0.5, coordinate='z'),
-            RotateAngleTransform(features=features, p=0.5, angle='zenith'),
-            RotateAngleTransform(features=features, p=0.5, angle='azimuth'),
-        ]
+        if config['target'] == 'zenith_sincos_euclidean_cancel_azimuth':
+            config['train_transforms'] = [
+                FlipCoordinateTransform(features=features, p=0.5, coordinate='z'),
+                RotateAngleTransform(features=features, p=0.5, angle='zenith'),
+            ]
+        else:
+            config['train_transforms'] = [
+                # FlipTimeTransform(features=features, p=0.5), 
+                FlipCoordinateTransform(features=features, p=0.5, coordinate='x'),
+                FlipCoordinateTransform(features=features, p=0.5, coordinate='y'),
+                FlipCoordinateTransform(features=features, p=0.5, coordinate='z'),
+                RotateAngleTransform(features=features, p=0.5, angle='zenith'),
+                RotateAngleTransform(features=features, p=0.5, angle='azimuth'),
+            ]
 
     if config['target'] == 'zenith_sincos_euclidean_cancel_azimuth':
-        config['train_transforms'] += [
-            CancelAzimuthByPredictionTransform(features=features)
-        ]
-        config['val_transforms'] += [
-            CancelAzimuthByPredictionTransform(features=features)
-        ]
+        config['train_transforms'].insert(0, CancelAzimuthByPredictionTransform(features=features))
+        config['val_transforms'].insert(0, CancelAzimuthByPredictionTransform(features=features))
 
     # Zero new block after adding
     config['zero_new_block'] = args.zero_new_block
