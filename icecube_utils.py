@@ -1442,6 +1442,7 @@ class RandomTransform(Transform):
     def __call__(self, input, target=None):
         if np.random.rand() < self.p:
             return super().__call__(input, target)
+        return input, target
 
 
 def angles_to_xyz(azimuth, zenith):
