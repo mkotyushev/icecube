@@ -11,6 +11,7 @@ from pytorch_lightning.strategies.ddp import DDPStrategy
 from graphnet.data.sqlite.sqlite_dataset import SQLiteDataset, SQLiteDatasetMaxNPulses
 
 from icecube_utils import (
+    CancelAzimuthByPredictionTransform,
     OneOfTransform,
     RotateAngleTransform,
     train_dynedge_blocks,
@@ -85,7 +86,8 @@ config = {
         "batch_size": 100,
         "accumulate_grad_batches": 1,
         "num_workers": 10,
-        "target": 'angles_sincos_euclidean',
+        "target": 'zenith_sincos_euclidean_cancel_azimuth',
+        # "target": 'angles_sincos_euclidean',
         # "target": 'direction',
         "early_stopping_patience": 5,
         "fit": {
@@ -124,6 +126,8 @@ config = {
         # 'dataset_class': SQLiteDatasetMaxNPulses,
         'zero_new_block': False,
         'block_output_aggregation': 'sum',
+        'train_transforms': [],
+        'val_transforms': [],
 }
 
 
@@ -177,8 +181,14 @@ if __name__ == '__main__':
             RotateAngleTransform(features=features, p=0.5, angle='zenith'),
             RotateAngleTransform(features=features, p=0.5, angle='azimuth'),
         ]
-    else:
-        config['train_transforms'] = []
+
+    if config['target'] == 'zenith_sincos_euclidean_cancel_azimuth':
+        config['train_transforms'] += [
+            CancelAzimuthByPredictionTransform(features=features)
+        ]
+        config['val_transforms'] += [
+            CancelAzimuthByPredictionTransform(features=features)
+        ]
 
     # Zero new block after adding
     config['zero_new_block'] = args.zero_new_block

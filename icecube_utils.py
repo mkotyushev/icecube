@@ -196,7 +196,7 @@ def build_model(
             config['truth'][1] + '_cos',
         ]
         additional_attributes = [*config['truth'], 'event_id']
-    elif config["target"] == 'zenith_sincos_euclidean':
+    elif config["target"] in ['zenith_sincos_euclidean', 'zenith_sincos_euclidean_cancel_azimuth']:
         task = AngleReconstructionSinCos(
             half=True,
             hidden_size=gnn.nb_outputs,
@@ -212,6 +212,8 @@ def build_model(
             config['truth'][0] + '_cos',
         ]
         additional_attributes = [*config['truth'], 'event_id']
+        if config["target"] == 'zenith_sincos_euclidean_cancel_azimuth':
+            additional_attributes.append('azimuth_pred')
     elif config["target"] == 'zenith_cos_euclidean':
         task = AngleReconstructionCos(
             hidden_size=gnn.nb_outputs,
@@ -371,6 +373,7 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
         truth_table = config['truth_table'],
         max_n_pulses=config['max_n_pulses']['max_n_pulses'],
         max_n_pulses_strategy="clamp",
+        transforms = config['val_transforms'],
     )
     return train_dataloader, validate_dataloader
 
@@ -431,20 +434,22 @@ def train_dynedge_from_scratch(config: Dict[str, Any], state_dict_path=None) -> 
 def inference(model, config: Dict[str, Any]) -> pd.DataFrame:
     """Applies model to the database specified in config['inference_database_path'] and saves results to disk."""
     # Make Dataloader
-    test_dataloader = make_dataloader(db = config['inference_database_path'],
-                                            selection = None, # Entire database
-                                            pulsemaps = config['pulsemap'],
-                                            features = config['features'],
-                                            truth = config['truth'],
-                                            batch_size = config['batch_size'],
-                                            num_workers = config['num_workers'],
-                                            shuffle = False,
-                                            labels = {'direction': Direction(azimuth_key=config['truth'][1], zenith_key=config['truth'][0])},
-                                            index_column = config['index_column'],
-                                            truth_table = config['truth_table'],
-                                            max_n_pulses = config['max_n_pulses']['max_n_pulses'],
-                                            max_n_pulses_strategy='clamp',
-                                            )
+    test_dataloader = make_dataloader(
+        db = config['inference_database_path'],
+        selection = None, # Entire database
+        pulsemaps = config['pulsemap'],
+        features = config['features'],
+        truth = config['truth'],
+        batch_size = config['batch_size'],
+        num_workers = config['num_workers'],
+        shuffle = False,
+        labels = {'direction': Direction(azimuth_key=config['truth'][1], zenith_key=config['truth'][0])},
+        index_column = config['index_column'],
+        truth_table = config['truth_table'],
+        max_n_pulses = config['max_n_pulses']['max_n_pulses'],
+        max_n_pulses_strategy='clamp',
+        transforms = config['val_transforms'],
+    )
     
     # Get predictions
     with torch.no_grad():
@@ -1410,10 +1415,15 @@ def train_dynedge_blocks(
     return model
 
 
-class RandomTransform:
-    def __init__(self, features, p=0.5):
-        self.p = p
+class Transform:
+    def __init__(self, features) -> None:
         self.feature_to_index = {feature: i for i, feature in enumerate(features)}
+
+
+class RandomTransform(Transform):
+    def __init__(self, features, p=0.5):
+        super().__init__(features)
+        self.p = p
     
     def __call__(self, input, target=None):
         # Flip is equivalent to reversing the geometry
@@ -1589,3 +1599,21 @@ class OneOfTransform:
     def transform(self, input, target=None):
         transform = np.random.choice(self.transforms)
         return transform.transform(input, target)
+
+
+class CancelAzimuthByPredictionTransform(Transform):
+    """Cancel azimuth by auxilary azimuth_pred feature"""
+    def __init__(self, features):
+        super().__init__(features)
+
+        # TODO: make it more general
+        assert self.feature_to_index['x'] == 0
+        assert self.feature_to_index['y'] == 1
+        assert self.feature_to_index['z'] == 2
+
+    def transform(self, input, target):
+        azimuth_pred = input[:, self.feature_to_index['azimuth_pred']]
+        v = input[:, :3]
+        k = np.array([0, 0, 1])
+        v = rotate(v, k, -azimuth_pred)
+        return input, target
