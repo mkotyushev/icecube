@@ -20,11 +20,14 @@ event_ids_str = ", ".join(df_meta["event_id"].astype(int).astype(str).to_list())
 # Load sensors geometry
 df_sensor_geometry = pd.read_csv('data/dataset/sensor_geometry.csv')
 
+# Load pulse data
 with sqlite3.connect(database_path) as conn:
     pulse_query = f'SELECT * FROM pulse_table WHERE event_id in ({event_ids_str})'
     df_pulses = pd.read_sql(pulse_query, conn)
-
 df_pulse = df_pulses[df_pulses['event_id'] == df_meta.iloc[0]['event_id']]
+
+# Load prediction results
+df_prediction = pd.read_hdf('results/angles_merged.h5', key='df')
 
 # Create static figure of sensors geometry
 # with blank trace for data
@@ -39,10 +42,15 @@ data = [
             size=1,
         ),
         uirevision='constant',
+        name='Sensors'
     ),
     go.Scatter3d(
         visible = True,
         mode='markers',
+        uirevision='constant',
+    ),
+    go.Scatter3d(
+        visible = True,
         uirevision='constant',
     ),
     go.Scatter3d(
@@ -81,7 +89,7 @@ app.layout = html.Div([
     Output('graph-with-slider', 'figure'),
     Input('event_id-slider', 'value'))
 def update_figure_on_event_id_change(event_index):
-    global database_path, df_pulses, df_pulse, df_meta, data
+    global database_path, df_pulses, df_pulse, df_meta, df_prediction, data
 
     df_pulse = df_pulses[df_pulses['event_id'] == df_meta.iloc[event_index]['event_id']]
 
@@ -89,7 +97,15 @@ def update_figure_on_event_id_change(event_index):
     true_x, true_y, true_z = angles_to_xyz(azimuth, zenith)
     true_x, true_y, true_z = true_x * 500, true_y * 500, true_z * 500
 
-    print(f'Event {event_index} with true direction ({true_x}, {true_y}, {true_z})')
+    zenith_pred, azimuth_pred = df_prediction.iloc[event_index]['zenith'], df_prediction.iloc[event_index]['azimuth']
+    pred_x, pred_y, pred_z = angles_to_xyz(azimuth_pred, zenith_pred)
+    pred_x, pred_y, pred_z = pred_x * 500, pred_y * 500, pred_z * 500
+
+    print(
+        f'Event {event_index} with '
+        f'true direction ({true_x}, {true_y}, {true_z}), '
+        f'predicted direction ({pred_x}, {pred_y}, {pred_z})'
+    )
 
     data = [
         data[0],
@@ -104,20 +120,36 @@ def update_figure_on_event_id_change(event_index):
                 'opacity': 0.5,
             },
             uirevision='constant',
+            name='Pulses'
         ),
         go.Scatter3d(
             visible = True,
-            x=[-true_x, true_x],
-            y=[-true_y, true_y],
-            z=[-true_z, true_z],
+            x=[0, true_x],
+            y=[0, true_y],
+            z=[0, true_z],
             marker={
                 'size': 0,
                 'sizemin': 0,
             },
             line={
-                'color': 'red'
-            }
-        )
+                'color': 'green'
+            },
+            name='True direction'
+        ),
+        go.Scatter3d(
+            visible = True,
+            x=[0, pred_x],
+            y=[0, pred_y],
+            z=[0, pred_z],
+            marker={
+                'size': 0,
+                'sizemin': 0,
+            },
+            line={
+                'color': 'yellow'
+            },
+            name='Predicted direction'
+        ),
     ]
 
     return df_pulse.time.max(), df_pulse.time.min(), df_pulse.time.max(), {
@@ -148,8 +180,10 @@ def update_figure_on_time_change(time):
                 'opacity': 0.5,
             },
             uirevision='constant',
+            name='Pulses'
         ),
         data[2],
+        data[3],
     ]
 
     return {
