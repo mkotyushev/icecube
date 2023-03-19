@@ -5,6 +5,9 @@ import plotly.graph_objects as go
 
 import pandas as pd
 
+from train_large import seed_everything
+
+seed_everything(0)
 
 # Load metadata
 database_path = '/workspace/icecube/data/batch_656.db'
@@ -59,7 +62,7 @@ app.layout = html.Div([
     dcc.Slider(
         id='time-slider'
     ),
-    dcc.Interval(id="animate", disabled=True),
+    dcc.Interval(id="animate", disabled=True, interval=16),
     html.Button("Play/Stop", id="play"),
 ])
 
