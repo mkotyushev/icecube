@@ -212,8 +212,8 @@ def build_model(
             config['truth'][0] + '_cos',
         ]
         additional_attributes = [*config['truth'], 'event_id']
-        if config["target"] == 'zenith_sincos_euclidean_cancel_azimuth':
-            additional_attributes.append('azimuth_pred')
+        # if config["target"] == 'zenith_sincos_euclidean_cancel_azimuth':
+        #     additional_attributes.append('azimuth_pred')
     elif config["target"] == 'zenith_cos_euclidean':
         task = AngleReconstructionCos(
             hidden_size=gnn.nb_outputs,
@@ -323,6 +323,8 @@ def load_pretrained_model(
         elif path.endswith('.pth'):
             logger.info(f'Loading state dict from {path}')
             state_dict = torch.load(path)
+            state_dict.pop('_tasks.1._affine.weight')
+            state_dict.pop('_tasks.1._affine.bias')
             model.load_state_dict(state_dict)
         else:
             raise ValueError(f'path must be a .pth or .ckpt file, got {path}')
@@ -1419,18 +1421,9 @@ class Transform:
     def __init__(self, features) -> None:
         self.feature_to_index = {feature: i for i, feature in enumerate(features)}
 
-
-class RandomTransform(Transform):
-    def __init__(self, features, p=0.5):
-        super().__init__(features)
-        self.p = p
-    
     def __call__(self, input, target=None):
-        # Flip is equivalent to reversing the geometry
         input_shape = input.shape
-        if np.random.rand() < self.p:
-            input, target = self.transform(input, target)
-
+        input, target = self.transform(input, target)
         assert input.shape == input_shape
 
         if target is not None:
@@ -1439,6 +1432,16 @@ class RandomTransform(Transform):
             return input, target
 
         return input
+
+
+class RandomTransform(Transform):
+    def __init__(self, features, p=0.5):
+        super().__init__(features)
+        self.p = p
+    
+    def __call__(self, input, target=None):
+        if np.random.rand() < self.p:
+            return super().__call__(input, target)
 
 
 def angles_to_xyz(azimuth, zenith):
@@ -1612,8 +1615,9 @@ class CancelAzimuthByPredictionTransform(Transform):
         assert self.feature_to_index['z'] == 2
 
     def transform(self, input, target):
-        azimuth_pred = input[:, self.feature_to_index['azimuth_pred']]
+        # azimuth_pred = input[:, self.feature_to_index['azimuth_pred']]
+        angle = target['azimuth']
         v = input[:, :3]
         k = np.array([0, 0, 1])
-        v = rotate(v, k, -azimuth_pred)
+        v = rotate(v, k, -angle)
         return input, target
