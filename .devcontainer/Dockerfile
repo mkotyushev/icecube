@@ -32,7 +32,7 @@ RUN /root/miniconda3/envs/graphnet/bin/python -m pip install --upgrade pip
 RUN /root/miniconda3/envs/graphnet/bin/pip install --default-timeout=1000 --extra-index-url https://download.pytorch.org/whl/cu117 torch==2.0.0+cu117 torchvision==0.15.0+cu117
 COPY ../requirements.txt .
 RUN /root/miniconda3/envs/graphnet/bin/pip install --default-timeout=1000 -r requirements.txt 
-RUN /root/miniconda3/envs/graphnet/bin/pip install matplotlib tables gpytorch tabulate seaborn mock
+RUN /root/miniconda3/envs/graphnet/bin/pip install matplotlib tables gpytorch tabulate seaborn mock plotly nbformat chart_studio
 
 ENV PYTHONPATH=/workspace/icecube/lib/graphnet/src:$PYTHONPATH
 ENV PYTHONPATH=/workspace/icecube/lib/otfusion:$PYTHONPATH
