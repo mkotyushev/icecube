@@ -156,9 +156,10 @@ if __name__ == '__main__':
     config['scheduler_kwargs']['factors'] = args.lr_onecycle_factors
     
     # Convert patience from epochs to validation checks
-    config['early_stopping_patience'] = \
-        config['early_stopping_patience'] / \
+    config['early_stopping_patience'] = int(
+        config['early_stopping_patience'] / 
         config['fit']['val_check_interval']
+    )
 
     if args.weight_loss_by_inverse_n_pulses_log:
         config['loss_weight'] = {
