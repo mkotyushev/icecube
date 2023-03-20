@@ -212,8 +212,8 @@ def build_model(
             config['truth'][0] + '_cos',
         ]
         additional_attributes = [*config['truth'], 'event_id']
-        # if config["target"] == 'zenith_sincos_euclidean_cancel_azimuth':
-        #     additional_attributes.append('azimuth_pred')
+        if config["target"] == 'zenith_sincos_euclidean_cancel_azimuth':
+            additional_attributes.append('azimuth_pred')
     elif config["target"] == 'zenith_cos_euclidean':
         task = AngleReconstructionCos(
             hidden_size=gnn.nb_outputs,
