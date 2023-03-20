@@ -196,8 +196,21 @@ if __name__ == '__main__':
     # - scale x and y by cos(rotation angle) -- that is why we limit the rotation angle
     # Reason: sensors geometry is tilted when rotating in world coordinates
     if config['target'] == 'zenith_sincos_euclidean_cancel_azimuth':
-        config['train_transforms'].insert(0, CancelAzimuthByPredictionTransform(features=features, gt=True))
-        config['val_transforms'].insert(0, CancelAzimuthByPredictionTransform(features=features, gt=False))
+        config['truth'] = config['truth'] + ['azimuth_pred']
+        config['train_transforms'].insert(
+            0, 
+            CancelAzimuthByPredictionTransform(
+                features=features, 
+                gt=True
+            )
+        )
+        config['val_transforms'].insert(
+            0, 
+            CancelAzimuthByPredictionTransform(
+                features=features, 
+                gt=False
+            )
+        )
 
     # Zero new block after adding
     config['zero_new_block'] = args.zero_new_block

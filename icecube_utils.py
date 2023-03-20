@@ -1621,7 +1621,7 @@ class CancelAzimuthByPredictionTransform(Transform):
         if self.gt:
             angle = target['azimuth']
         else:
-            angle = input[:, self.feature_to_index['azimuth_pred']]
+            angle = target['azimuth_pred']
         v = input[:, :3]
         k = np.array([0, 0, 1])
         v = rotate(v, k, -angle)
