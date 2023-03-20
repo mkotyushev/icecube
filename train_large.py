@@ -175,22 +175,42 @@ if __name__ == '__main__':
     if args.enable_augmentations:
         if config['target'] == 'zenith_sincos_euclidean_cancel_azimuth':
             config['train_transforms'] = [
-                FlipCoordinateTransform(features=features, p=0.5, coordinate='z'),
-                RotateAngleTransform(features=features, p=0.5, angle='zenith'),
-            ]
-        else:
-            config['train_transforms'] = [
-                # FlipTimeTransform(features=features, p=0.5), 
                 FlipCoordinateTransform(features=features, p=0.5, coordinate='x'),
                 FlipCoordinateTransform(features=features, p=0.5, coordinate='y'),
                 FlipCoordinateTransform(features=features, p=0.5, coordinate='z'),
-                RotateAngleTransform(features=features, p=0.5, angle='zenith'),
+                # TODO: make a proper rotation for zenith for transforms
+                # RotateAngleTransform(features=features, p=0.5, angle='zenith'),
+            ]
+        else:
+            config['train_transforms'] = [
+                FlipCoordinateTransform(features=features, p=0.5, coordinate='x'),
+                FlipCoordinateTransform(features=features, p=0.5, coordinate='y'),
+                FlipCoordinateTransform(features=features, p=0.5, coordinate='z'),
                 RotateAngleTransform(features=features, p=0.5, angle='azimuth'),
             ]
 
+    # TODO: make a proper rotation for zenith: 
+    # - limit rotation angle to some sensible range
+    # - rotate in world coordinates like now
+    # - rotate back in local coordinates of each vertical array of sensors in (rotated) x, y plane
+    # - scale x and y by cos(rotation angle) -- that is why we limit the rotation angle
+    # Reason: sensors geometry is tilted when rotating in world coordinates
     if config['target'] == 'zenith_sincos_euclidean_cancel_azimuth':
-        config['train_transforms'].insert(0, CancelAzimuthByPredictionTransform(features=features))
-        config['val_transforms'].insert(0, CancelAzimuthByPredictionTransform(features=features))
+        config['truth'] = config['truth'] + ['azimuth_pred']
+        config['train_transforms'].insert(
+            0, 
+            CancelAzimuthByPredictionTransform(
+                features=features, 
+                gt=True
+            )
+        )
+        config['val_transforms'].insert(
+            0, 
+            CancelAzimuthByPredictionTransform(
+                features=features, 
+                gt=False
+            )
+        )
 
     # Zero new block after adding
     config['zero_new_block'] = args.zero_new_block

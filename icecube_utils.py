@@ -212,8 +212,8 @@ def build_model(
             config['truth'][0] + '_cos',
         ]
         additional_attributes = [*config['truth'], 'event_id']
-        # if config["target"] == 'zenith_sincos_euclidean_cancel_azimuth':
-        #     additional_attributes.append('azimuth_pred')
+        if config["target"] == 'zenith_sincos_euclidean_cancel_azimuth':
+            additional_attributes.append('azimuth_pred')
     elif config["target"] == 'zenith_cos_euclidean':
         task = AngleReconstructionCos(
             hidden_size=gnn.nb_outputs,
@@ -1607,8 +1607,10 @@ class OneOfTransform:
 
 class CancelAzimuthByPredictionTransform(Transform):
     """Cancel azimuth by auxilary azimuth_pred feature"""
-    def __init__(self, features):
+    def __init__(self, features, gt=False):
         super().__init__(features)
+
+        self.gt = gt
 
         # TODO: make it more general
         assert self.feature_to_index['x'] == 0
@@ -1616,9 +1618,12 @@ class CancelAzimuthByPredictionTransform(Transform):
         assert self.feature_to_index['z'] == 2
 
     def transform(self, input, target):
-        # azimuth_pred = input[:, self.feature_to_index['azimuth_pred']]
-        angle = target['azimuth']
+        if self.gt:
+            angle = target['azimuth']
+        else:
+            angle = target['azimuth_pred']
         v = input[:, :3]
         k = np.array([0, 0, 1])
         v = rotate(v, k, -angle)
+        input = np.concatenate((v, input[:, 3:]), axis=1)
         return input, target
