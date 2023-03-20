@@ -86,7 +86,7 @@ config = {
         "batch_size": 100,
         "accumulate_grad_batches": 1,
         "num_workers": 10,
-        "target": 'zenith_sincos_euclidean_cancel_azimuth',
+        "target": 'zenith',
         # "target": 'angles_sincos_euclidean',
         # "target": 'direction',
         "early_stopping_patience": 5,
@@ -173,7 +173,7 @@ if __name__ == '__main__':
         }
 
     if args.enable_augmentations:
-        if config['target'] == 'zenith_sincos_euclidean_cancel_azimuth':
+        if config['target'] in ['zenith_sincos_euclidean_cancel_azimuth', 'zenith']:
             config['train_transforms'] = [
                 FlipCoordinateTransform(features=features, p=0.5, coordinate='x'),
                 FlipCoordinateTransform(features=features, p=0.5, coordinate='y'),
