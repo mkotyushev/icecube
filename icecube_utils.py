@@ -323,8 +323,6 @@ def load_pretrained_model(
         elif path.endswith('.pth'):
             logger.info(f'Loading state dict from {path}')
             state_dict = torch.load(path)
-            state_dict.pop('_tasks.1._affine.weight')
-            state_dict.pop('_tasks.1._affine.bias')
             model.load_state_dict(state_dict)
         else:
             raise ValueError(f'path must be a .pth or .ckpt file, got {path}')
