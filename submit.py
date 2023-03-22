@@ -21,7 +21,7 @@ def prepare_dataframe(df, angle_post_fix = '_reco', vec_post_fix = '') -> pd.Dat
     r = np.sqrt(df['direction_x'+ vec_post_fix]**2 + df['direction_y'+ vec_post_fix]**2 + df['direction_z' + vec_post_fix]**2)
     df['zenith' + angle_post_fix] = np.arccos(df['direction_z'+ vec_post_fix]/r)
     df['azimuth'+ angle_post_fix] = np.arctan2(df['direction_y'+ vec_post_fix],df['direction_x' + vec_post_fix]) #np.sign(results['true_y'])*np.arccos((results['true_x'])/(np.sqrt(results['true_x']**2 + results['true_y']**2)))
-    df['azimuth'+ angle_post_fix][df['azimuth'  + angle_post_fix]<0] = df['azimuth'  + angle_post_fix][df['azimuth'  +  angle_post_fix]<0] + 2*np.pi 
+    df.loc[df['azimuth'  + angle_post_fix]<0, 'azimuth'+ angle_post_fix] = df['azimuth'  + angle_post_fix][df['azimuth'  +  angle_post_fix]<0] + 2*np.pi 
 
     drop_these_columns = []
     for column in df.columns:
@@ -57,8 +57,8 @@ def main(args):
         config
     )
 
-    df = prepare_dataframe(df, angle_post_fix='', vec_post_fix='')
     df['event_id'] = df['event_id'].astype(int)
+    df = prepare_dataframe(df, angle_post_fix='', vec_post_fix='')
     df = df.sort_values(by='event_id')
     df.to_csv(args.save_path)
 
