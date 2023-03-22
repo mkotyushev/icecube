@@ -1,3 +1,4 @@
+import argparse
 import pyarrow.parquet as pq
 import sqlite3
 import pandas as pd
@@ -8,6 +9,16 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from graphnet.data.sqlite.sqlite_utilities import create_table
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--meta_data_path', type=str, required=True)
+    parser.add_argument('--database_path', type=str, required=True)
+    parser.add_argument('--input_data_folder', type=str, required=True)
+    parser.add_argument('--geometry_table_path', type=str, required=True)
+    return parser.parse_args()
+
 
 def load_input(meta_batch: pd.DataFrame, input_data_folder: str, geometry_table: pd.DataFrame) -> pd.DataFrame:
         """
@@ -107,22 +118,20 @@ def convert_to_sqlite(meta_data_path: str,
 
 
 if __name__ == '__main__':
-    geometry_table = pd.read_csv('/workspace/data/sensor_geometry.csv')
-    input_data_folder = '/workspace/data/train_fold_0'
-    meta_data_path = '/workspace/data/train_meta.parquet'
-    database_path = '/workspace/data/fold_0'
+    args = parse_args()
     convert_to_sqlite(
-        meta_data_path,
-        database_path=database_path,
-        input_data_folder=input_data_folder,
-        geometry_table=geometry_table,
-        batch_ids=[
-            494, 460, 14, 637, 352, 384, 52, 127, 535, 577, 
-            405, 312, 140, 170, 655, 476, 575, 76, 592, 298, 
-            401, 541, 596, 588, 206, 271, 474, 315, 48, 409, 
-            526, 103, 517, 64, 386, 200, 50, 452, 159, 142, 
-            529, 175, 419, 243, 301, 578, 75, 362, 620, 428, 
-            590, 446, 547, 627, 413, 574, 252, 625, 85, 496, 
-            210, 415, 233, 162, 626, 453
-        ]  # random shuffled with seed 0
+        args.meta_data_path,
+        database_path=args.database_path,
+        input_data_folder=args.input_data_folder,
+        geometry_table=pd.read_csv(args.geometry_table_path)
     )
+
+# [
+#     494, 460, 14, 637, 352, 384, 52, 127, 535, 577, 
+#     405, 312, 140, 170, 655, 476, 575, 76, 592, 298, 
+#     401, 541, 596, 588, 206, 271, 474, 315, 48, 409, 
+#     526, 103, 517, 64, 386, 200, 50, 452, 159, 142, 
+#     529, 175, 419, 243, 301, 578, 75, 362, 620, 428, 
+#     590, 446, 547, 627, 413, 574, 252, 625, 85, 496, 
+#     210, 415, 233, 162, 626, 453
+# ]  # random shuffled with seed 0
