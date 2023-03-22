@@ -1,5 +1,3 @@
-import graphnet
-# %%
 import pyarrow.parquet as pq
 import sqlite3
 import pandas as pd
@@ -11,7 +9,7 @@ import numpy as np
 
 from graphnet.data.sqlite.sqlite_utilities import create_table
 
-def load_input(meta_batch: pd.DataFrame, input_data_folder: str) -> pd.DataFrame:
+def load_input(meta_batch: pd.DataFrame, input_data_folder: str, geometry_table: pd.DataFrame) -> pd.DataFrame:
         """
         Will load the corresponding detector readings associated with the meta data batch.
         """
@@ -62,6 +60,7 @@ def add_to_table(database_path: str,
 def convert_to_sqlite(meta_data_path: str,
                       database_path: str,
                       input_data_folder: str,
+                      geometry_table: pd.DataFrame,
                       batch_size: int = 200000,
                       batch_ids: Optional[List[int]] = None,) -> None:
     """Converts a selection of the Competition's parquet files to a single sqlite database.
@@ -74,7 +73,7 @@ def convert_to_sqlite(meta_data_path: str,
         batch_ids (List[int]): The batch_ids you want converted. Defaults to None (all batches will be converted)
     """
     if batch_ids is None:
-        batch_ids = np.arange(1,661,1).to_list()
+        batch_ids = np.arange(1,661,1).tolist()
     else:
         assert isinstance(batch_ids,list), "Variable 'batch_ids' must be list."
     if not database_path.endswith('.db'):
@@ -90,7 +89,7 @@ def convert_to_sqlite(meta_data_path: str,
                         df = meta_data_batch,
                         table_name='meta_table',
                         is_primary_key= True)
-            pulses = load_input(meta_batch=meta_data_batch, input_data_folder= input_data_folder)
+            pulses = load_input(meta_batch=meta_data_batch, input_data_folder= input_data_folder, geometry_table=geometry_table)
             del meta_data_batch # memory
             add_to_table(database_path = database_path,
                         df = pulses,
@@ -106,27 +105,24 @@ def convert_to_sqlite(meta_data_path: str,
     del meta_data_iter # memory
     print(f'Conversion Complete!. Database available at\n {database_path}')
 
-# %% [markdown]
-# This notebook comes with both batch 1 and 51 converted to sqlite databases, so you don't have to convert them yourself. They were produced by running the following code:
-# 
-# ```python 
-input_data_folder = '/workspace/data/train_fold_0'
-geometry_table = pd.read_csv('/workspace/data/sensor_geometry.csv')
-meta_data_path = '/workspace/data/train_meta.parquet'
 
-#batch_1
-database_path = '/workspace/data/fold_0'
-convert_to_sqlite(
-    meta_data_path,
-    database_path=database_path,
-    input_data_folder=input_data_folder,
-    batch_ids=[
-        494, 460, 14, 637, 352, 384, 52, 127, 535, 577, 
-        405, 312, 140, 170, 655, 476, 575, 76, 592, 298, 
-        401, 541, 596, 588, 206, 271, 474, 315, 48, 409, 
-        526, 103, 517, 64, 386, 200, 50, 452, 159, 142, 
-        529, 175, 419, 243, 301, 578, 75, 362, 620, 428, 
-        590, 446, 547, 627, 413, 574, 252, 625, 85, 496, 
-        210, 415, 233, 162, 626, 453
-    ]  # random shuffled with seed 0
-)
+if __name__ == '__main__':
+    geometry_table = pd.read_csv('/workspace/data/sensor_geometry.csv')
+    input_data_folder = '/workspace/data/train_fold_0'
+    meta_data_path = '/workspace/data/train_meta.parquet'
+    database_path = '/workspace/data/fold_0'
+    convert_to_sqlite(
+        meta_data_path,
+        database_path=database_path,
+        input_data_folder=input_data_folder,
+        geometry_table=geometry_table,
+        batch_ids=[
+            494, 460, 14, 637, 352, 384, 52, 127, 535, 577, 
+            405, 312, 140, 170, 655, 476, 575, 76, 592, 298, 
+            401, 541, 596, 588, 206, 271, 474, 315, 48, 409, 
+            526, 103, 517, 64, 386, 200, 50, 452, 159, 142, 
+            529, 175, 419, 243, 301, 578, 75, 362, 620, 428, 
+            590, 446, 547, 627, 413, 574, 252, 625, 85, 496, 
+            210, 415, 233, 162, 626, 453
+        ]  # random shuffled with seed 0
+    )
