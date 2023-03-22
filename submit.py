@@ -51,10 +51,12 @@ def main(args):
         path=args.state_dict_path,
         return_train_dataloader=False,
     )
+    model.additional_attributes = ['event_id']
 
     df = inference(
         model.cuda(), 
-        config
+        config,
+        use_labels=False
     )
 
     df['event_id'] = df['event_id'].astype(int)

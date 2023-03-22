@@ -431,7 +431,10 @@ def train_dynedge_from_scratch(config: Dict[str, Any], state_dict_path=None) -> 
     return train_dynedge(model, config, train_dataloader, validate_dataloader)
 
 
-def inference(model, config: Dict[str, Any]) -> pd.DataFrame:
+def inference(model, config: Dict[str, Any], use_labels: bool) -> pd.DataFrame:
+    labels = None
+    if use_labels:
+        labels = {'direction': Direction(azimuth_key=config['truth'][1], zenith_key=config['truth'][0])}
     """Applies model to the database specified in config['inference_database_path'] and saves results to disk."""
     # Make Dataloader
     test_dataloader = make_dataloader(
@@ -443,7 +446,7 @@ def inference(model, config: Dict[str, Any]) -> pd.DataFrame:
         batch_size = config['batch_size'],
         num_workers = config['num_workers'],
         shuffle = False,
-        labels = {'direction': Direction(azimuth_key=config['truth'][1], zenith_key=config['truth'][0])},
+        labels = labels,
         index_column = config['index_column'],
         truth_table = config['truth_table'],
         max_n_pulses = config['max_n_pulses']['max_n_pulses'],
