@@ -39,7 +39,8 @@ def main(args):
     config['batch_size'] = 200
     config['truth'] = ['zenith', 'azimuth']
     config['target'] = 'direction'
-    config['path'] = '/kaggle/working/test_database.db'
+    config['num_workers'] = 4
+    config['path'] = args.test_db_path
     config['inference_database_path'] = args.test_db_path
     config['bias'] = True
     config['fit']['distribution_strategy'] = 'ddp'
