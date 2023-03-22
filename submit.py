@@ -13,6 +13,7 @@ def parse_args():
     parser.add_argument('--size_multiplier', type=int, default=1)
     parser.add_argument('--test-db-path', type=str, default='/kaggle/working/test_database.db')
     parser.add_argument('--state_dict_path', type=str, default='/kaggle/input/icecube-model/state_dict.pth')
+    parser.add_argument('--save-path', type=str, default='/kaggle/working/submission.csv')
     return parser.parse_args()
 
 
@@ -35,13 +36,14 @@ def main(args):
         (x * args.size_multiplier, y * args.size_multiplier) 
         for x, y in [(128, 256), (336, 256), (336, 256), (336, 256)]
     ]
-    config['batch_size'] = 256
+    config['batch_size'] = 200
     config['truth'] = ['zenith', 'azimuth']
     config['target'] = 'direction'
     config['path'] = '/kaggle/working/test_database.db'
     config['inference_database_path'] = args.test_db_path
     config['bias'] = True
     config['fit']['distribution_strategy'] = 'ddp'
+    config['max_n_pulses']['max_n_pulses'] = None
 
     model = load_pretrained_model(
         config=config, 
@@ -56,7 +58,7 @@ def main(args):
 
     df = prepare_dataframe(df, angle_post_fix='', vec_post_fix='')
     df = df.sort_values(by='event_id')
-    df.to_csv('/kaggle/working/submission.csv')
+    df.to_csv(args.save_path)
 
 
 if __name__ == '__main__':
