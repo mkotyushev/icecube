@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
@@ -13,29 +14,20 @@ from icecube_utils import (
     calculate_angular_error,
     load_pretrained_model
 )
-from parameters import get_parser
 from train_large import config as base_config
 
 features = FEATURES.KAGGLE
 truth = TRUTH.KAGGLE
 
 
-def get_args():
-    parser = get_parser()
-    parser.add_argument('--pdf-save-path', type=str, default='mapping_results.pdf')
-    parser.add_argument('--size-multiplier', type=int, default=1)
-    parser.add_argument('--from-model-state-dict-path', type=str, required=True)
-    parser.add_argument('--to-model-state-dict-path', type=str, required=True)
-    parser.add_argument('--mapped-model-state-dict-path', type=str, required=True)
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('pdf_save_path', type=str, default='mapping_results.pdf')
+    parser.add_argument('size_multiplier', type=int, default=1)
+    parser.add_argument('from_model_state_dict_path', type=str)
+    parser.add_argument('to_model_state_dict_path', type=str)
+    parser.add_argument('mapped_model_state_dict_path', type=str)
     args = parser.parse_args()
-
-    args.gpu_id = 0
-    args.proper_marginals = True
-    args.skip_last_layer = True
-    args.skip_personal_idx = False
-    args.act_num_samples = 20
-    args.width_ratio = 1
-    args.dataset = 'icecube'
 
     return args
 
@@ -71,19 +63,20 @@ def main(args):
                     (x * args.size_multiplier, y * args.size_multiplier) 
                     for x, y in [(128, 256), (336, 256), (336, 256), (336, 256)]
                 ]
-                config['batch_size'] = 200
+            config['batch_size'] = 512
 
-            model, _ = load_pretrained_model(
+            model = load_pretrained_model(
                 config=config, 
-                state_dict_path=state_dict_path,
-                return_train_dataloader=True,
+                path=state_dict_path,
+                return_train_dataloader=False,
             )
 
             results[model_name] = calculate_angular_error(
                 convert_to_3d(
                     inference(
                         model.cuda(), 
-                        config
+                        config,
+                        True
                     )
                 )
             )
@@ -108,5 +101,5 @@ def main(args):
 
 
 if __name__ == '__main__':
-    args = get_args()
+    args = parse_args()
     main(args)
