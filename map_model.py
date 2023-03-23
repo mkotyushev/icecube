@@ -52,11 +52,13 @@ def get_args():
 
     args.gpu_id = 0
     args.proper_marginals = True
-    args.skip_last_layer = True
+    args.skip_last_layer = False
     args.skip_personal_idx = False
-    args.act_num_samples = 20
+    args.act_num_samples = 512
+    # args.act_num_samples = 200
     args.width_ratio = 1
     args.dataset = 'icecube'
+    args.disable_bias = False
 
     return args
 
@@ -300,7 +302,7 @@ def get_acts_wassersteinized_layers_modularized(
     incoming_layer_aligned = True # for input
     while idx < num_layers:
         ((layer0_name, fc_layer0_weight), (layer1_name, fc_layer1_weight)) = networks_named_params[idx]
-        logger.info("\n--------------- At layer index {} ------------- \n ".format(idx))
+        logger.info("\n--------------- At layer index {} name {} ------------- \n ".format(idx, layer0_name))
         logger.info(f"Previous layer shape is {previous_layer_shape}")
         previous_layer_shape = fc_layer1_weight.shape
 
@@ -356,9 +358,14 @@ def get_acts_wassersteinized_layers_modularized(
                     # Handles cat connections of DynEdgeConv readout for 3 global poolings
                     temp_T_var = [T_var, T_var, T_var]
                 else:
-                    postproc_T_vars = \
-                        [torch.eye(input_dim).cuda()] + \
-                        [x for name, x in T_vars.items() if '2.weight' in name]
+                    postproc_T_vars = [
+                        torch.eye(input_dim).cuda(),
+                        T_vars['_gnn._conv_layers.0.nn.2.weight'],
+                        T_vars['_gnn._conv_layers.1.nn.2.weight'],
+                        T_vars['_gnn._conv_layers.2.nn.2.weight'],
+                        T_vars['_gnn._conv_layers.3.nn.2.weight']
+                    ]
+
                     if fc_layer0_weight_data.shape[1] == sum(x.shape[0] for x in postproc_T_vars):
                         # Handles cat connections of DynEdge cat of conv layers: 
                         # input layer + 4 T_var's of conv layers' biases
@@ -414,7 +421,7 @@ def get_acts_wassersteinized_layers_modularized(
             logger.info(f"M0.shape is {M0.shape}, M1.shape is {M1.shape}")
 
         if args.skip_last_layer and is_last_layer:
-            logger.info(f"Skipping beacuse lasy layer {layer0_name}")
+            logger.info(f"Skipping beacuse last layer {layer0_name}")
             if args.skip_last_layer_type == 'average':
                 logger.info("\tSkipping last layer: average")
                 if args.ensemble_step != 0.5:
@@ -432,34 +439,48 @@ def get_acts_wassersteinized_layers_modularized(
             logger.info(f"Not skipping because last layer {layer0_name}")
             T_var = _get_current_layer_transport_map(args, mu, nu, M0, M1, idx=idx, layer_shape=layer_shape, eps=eps, layer_name=layer0_name)
             T_var, marginals = _compute_marginals(args, T_var, device, eps=eps)
+            logger.info(f'T_var.shape is {T_var.shape}')
 
-            scale = fc_layer0_weight_data.shape[1] / fc_layer1_weight_data.shape[1]
-            if is_bias or not (is_first_layer or is_last_layer):
-                scale = scale ** 0.5
-            logger.info(f'scale is {scale}')
-            T_var = T_var * scale
+            scale_outer = 1.0
+            if layer0_name.startswith('_gnn._post_processing.0'):
+                scale_outer = (fc_layer0_weight_data.shape[1] - input_dim) / (fc_layer1_weight_data.shape[1] - input_dim)
+            else:
+                scale_outer = fc_layer0_weight_data.shape[1] / fc_layer1_weight_data.shape[1]
+            
+            scale_inner = 1.0
+            if not is_bias:
+                scale_inner = scale_outer
+            else:
+                scale_inner = 1.0
+            
+            if (not (is_first_layer or is_last_layer)) and not layer0_name.startswith('_gnn._post_processing.0'):
+                scale_outer = scale_outer ** 0.5
+                scale_inner = scale_inner ** 0.5
+            
+            logger.info(f'scale_inner is {scale_inner}')
+            logger.info(f'scale_outer is {scale_outer}')
 
-            T_vars[layer0_name] = T_var
+            T_vars[layer0_name] = T_var * scale_inner
 
             logger.info(
                 f"Ratio of trace to the matrix sum: {torch.trace(T_var) / torch.sum(T_var)}"
             )
             logger.info(
-                "Here, trace is {} and matrix sum is {} ".format(torch.trace(T_var), torch.sum(T_var))
+                "Here, trace is {} and matrix sum is {} ".format(torch.trace(T_var * scale_inner), torch.sum(T_var * scale_inner))
             )
-            setattr(args, 'trace_sum_ratio_{}'.format(layer0_name), (torch.trace(T_var) / torch.sum(T_var)).item())
+            setattr(args, 'trace_sum_ratio_{}'.format(layer0_name), (torch.trace(T_var * scale_inner) / torch.sum(T_var * scale_inner)).item())
 
             logger.info(f"Shape of aligned_wt is {aligned_wt.shape}")
             logger.info(f"Shape of fc_layer0_weight_data is {fc_layer0_weight_data.shape}")
             if args.past_correction:
                 logger.info(f"Output correction")
                 if is_bias:
-                    t_fc0_model = torch.matmul(aligned_wt, T_var)
+                    t_fc0_model = torch.matmul(aligned_wt, T_var * scale_inner)
                 else:
-                    t_fc0_model = torch.matmul(T_var.t(), aligned_wt.contiguous().view(aligned_wt.shape[0], -1))
+                    t_fc0_model = torch.matmul((T_var * scale_inner).t(), aligned_wt.contiguous().view(aligned_wt.shape[0], -1))
             else:
                 logger.info(f"No output correction")
-                t_fc0_model = torch.matmul(T_var.t(), fc_layer0_weight_data.view(fc_layer0_weight_data.shape[0], -1))
+                t_fc0_model = torch.matmul((T_var * scale_inner).t(), fc_layer0_weight_data.view(fc_layer0_weight_data.shape[0], -1))
             logger.info(f"Shape of t_fc0_model is {t_fc0_model.shape}")
 
             # Average the weights of aligned first layers
@@ -472,6 +493,8 @@ def get_acts_wassersteinized_layers_modularized(
             avg_aligned_layers.append(geometric_fc)
             aligned_layers[layer0_name] = t_fc0_model
             incoming_layer_aligned = False
+            
+            T_var = T_var * scale_outer
 
             # remove cached variables to prevent out of memory
             activations_0 = None
