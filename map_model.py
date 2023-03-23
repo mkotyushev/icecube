@@ -453,7 +453,7 @@ def get_acts_wassersteinized_layers_modularized(
             else:
                 scale_inner = 1.0
             
-            if (not (is_first_layer or is_last_layer)) and not layer0_name.startswith('_gnn._post_processing.0'):
+            if not is_bias or not (is_first_layer or is_last_layer):
                 scale_outer = scale_outer ** 0.5
                 scale_inner = scale_inner ** 0.5
             
