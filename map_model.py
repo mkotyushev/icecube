@@ -33,6 +33,11 @@ from wasserstein_ensemble import (
     update_model
 )
 
+from graphnet.utilities.logging import get_logger
+
+# Constants
+logger = get_logger()
+
 features = FEATURES.KAGGLE
 truth = TRUTH.KAGGLE
 
@@ -65,8 +70,8 @@ def compute_activations_across_models_v1(args, models, train_loader, num_samples
     # hook that computes the mean activations across data samples
     def get_activation(activation, name):
         def hook(model, input, output):
-            # print("num of samples seen before", num_samples_processed)
-            # print("output is ", output.detach())
+            # logger.info("num of samples seen before", num_samples_processed)
+            # logger.info("output is ", output.detach())
             if name not in activation:
                 activation[name] = []
 
@@ -81,10 +86,9 @@ def compute_activations_across_models_v1(args, models, train_loader, num_samples
     activations = {}
     forward_hooks = []
 
-    assert args.disable_bias
+    # assert args.disable_bias
     # handle below for bias later on!
-    # print("list of model named params ", list(models[0].named_parameters()))
-    param_names = [tupl[0].replace('.weight', '') for tupl in models[0].named_parameters()]
+    # logger.info("list of model named params ", list(models[0].named_parameters()))
     for idx, model in enumerate(models):
 
         # Initialize the activation dictionary for each model
@@ -95,7 +99,7 @@ def compute_activations_across_models_v1(args, models, train_loader, num_samples
             if name not in layer_names:
                 continue
             layer_hooks.append(layer.register_forward_hook(get_activation(activations[idx], name)))
-            print("set forward hook for layer named: ", name)
+            logger.info(f"set forward hook for layer named: {name}")
 
         forward_hooks.append(layer_hooks)
         # Set the model in train mode
@@ -121,66 +125,58 @@ def compute_activations_across_models_v1(args, models, train_loader, num_samples
 
         num_samples_processed += len(data)
 
-
-
-    print("num_personal_idx ", num_personal_idx)
+    logger.info(f"num_personal_idx {num_personal_idx}")
     setattr(args, 'num_personal_idx', num_personal_idx)
 
     relu = torch.nn.ReLU()
-    maxpool = torch.nn.MaxPool2d(kernel_size=2, stride=2)
-    avgpool = torch.nn.AvgPool2d(kernel_size=1, stride=1)
 
     # Combine the activations generated across the number of samples to form importance scores
     # The importance calculated is based on the 'mode' flag: which is either of 'mean', 'std', 'meanstd'
 
     # model_cfg = myutils.get_model_layers_cfg(args.model_name)
     for idx in range(len(models)):
-        cfg_idx = 0
         for lnum, layer in enumerate(activations[idx]):
-            print('***********')
+            logger.info('***********')
             activations[idx][layer] = torch.concatenate(activations[idx][layer], dim=0)
-            print("min of act: {}, max: {}, mean: {}".format(torch.min(activations[idx][layer]), torch.max(activations[idx][layer]), torch.mean(activations[idx][layer])))
+            logger.info(
+                "min of act: {}, max: {}, mean: {}".format(
+                    torch.min(activations[idx][layer]), 
+                    torch.max(activations[idx][layer]), 
+                    torch.mean(activations[idx][layer])
+                )
+            )
             # assert (activations[idx][layer] >= 0).all()
 
             if not args.prelu_acts and not lnum == (len(activations[idx])-1):
-                # print("activation was ", activations[idx][layer])
-                print("applying relu ---------------")
+                # logger.info("activation was ", activations[idx][layer])
+                logger.info("applying relu ---------------")
                 activations[idx][layer] = relu(activations[idx][layer])
-                # print("activation now ", activations[idx][layer])
-                print("after RELU: min of act: {}, max: {}, mean: {}".format(torch.min(activations[idx][layer]),
-                                                                 torch.max(activations[idx][layer]),
-
-                                                                 torch.mean(activations[idx][layer])))
-                
+                # logger.info("activation now ", activations[idx][layer])
+                logger.info(
+                    "after RELU: min of act: {}, max: {}, mean: {}".format(
+                        torch.min(activations[idx][layer]),
+                        torch.max(activations[idx][layer]),
+                        torch.mean(activations[idx][layer])
+                    )
+                )
             elif args.model_name == 'vgg11_nobias' and args.pool_acts and len(activations[idx][layer].shape)>3:
-
                 if args.pool_relu:
-                    print("applying relu ---------------")
+                    logger.info("applying relu ---------------")
                     activations[idx][layer] = relu(activations[idx][layer])
 
                 activations[idx][layer] = activations[idx][layer].squeeze(1)
 
-                # # apply maxpool wherever the next thing in config list is 'M'
-                # if (cfg_idx + 1) < len(model_cfg):
-                #     if model_cfg[cfg_idx+1] == 'M':
-                #         print("applying maxpool ---------------")
-                #         activations[idx][layer] = maxpool(activations[idx][layer])
-                #         cfg_idx += 2
-                #     else:
-                #         cfg_idx += 1
-
-                # # apply avgpool only for the last layer
-                # if cfg_idx == len(model_cfg):
-                #     print("applying avgpool ---------------")
-                #     activations[idx][layer] = avgpool(activations[idx][layer])
-
                 # unsqueeze back at axis 1
                 activations[idx][layer] = activations[idx][layer].unsqueeze(1)
 
-                print("checking stats after pooling")
-                print("min of act: {}, max: {}, mean: {}".format(torch.min(activations[idx][layer]),
-                                                                 torch.max(activations[idx][layer]),
-                                                                 torch.mean(activations[idx][layer])))
+                logger.info("checking stats after pooling")
+                logger.info(
+                    "min of act: {}, max: {}, mean: {}".format(
+                        torch.min(activations[idx][layer]),
+                        torch.max(activations[idx][layer]),
+                        torch.mean(activations[idx][layer])
+                    )
+                )
 
             if mode == 'mean':
                 activations[idx][layer] = activations[idx][layer].mean(dim=0)
@@ -192,21 +188,38 @@ def compute_activations_across_models_v1(args, models, train_loader, num_samples
             if args.standardize_acts:
                 mean_acts = activations[idx][layer].mean(dim=0)
                 std_acts = activations[idx][layer].std(dim=0)
-                print("shape of mean, std, and usual acts are: ", mean_acts.shape, std_acts.shape, activations[idx][layer].shape)
+                logger.info(
+                    "shape of mean, std, and usual acts are: {}, {}, {}".format(
+                        mean_acts.shape, 
+                        std_acts.shape, 
+                        activations[idx][layer].shape
+                    )
+                )
                 activations[idx][layer] = (activations[idx][layer] - mean_acts)/(std_acts + 1e-9)
             elif args.center_acts:
                 mean_acts = activations[idx][layer].mean(dim=0)
-                print("shape of mean and usual acts are: ", mean_acts.shape, activations[idx][layer].shape)
+                logger.info(
+                    "shape of mean and usual acts are: {}, {}".format(
+                        mean_acts.shape, 
+                        activations[idx][layer].shape
+                    )
+                )
                 activations[idx][layer] = (activations[idx][layer] - mean_acts)
             elif args.normalize_acts:
-                print("normalizing the activation vectors")
+                logger.info("normalizing the activation vectors")
                 activations[idx][layer] = normalize_tensor(activations[idx][layer])
-                print("min of act: {}, max: {}, mean: {}".format(torch.min(activations[idx][layer]),
-                                                                 torch.max(activations[idx][layer]),
-                                                                 torch.mean(activations[idx][layer])))
+                logger.info(
+                    "min of act: {}, max: {}, mean: {}".format(
+                        torch.min(activations[idx][layer]),
+                        torch.max(activations[idx][layer]),
+                        torch.mean(activations[idx][layer])
+                    )
+                )
 
-            print("activations for idx {} at layer {} have the following shape ".format(idx, layer), activations[idx][layer].shape)
-            print('-----------')
+            logger.info(
+                "activations for idx {} at layer {} have the following shape {}".format(
+                    idx, layer, activations[idx][layer].shape))
+            logger.info('-----------')
 
     # Dump the activations for all models onto disk
     if dump_activations and dump_path is not None:
@@ -232,7 +245,7 @@ def process_activations(args, activations, layer0_name, layer1_name):
     if args.same_model != -1:
         # sanity check when averaging the same model (with value being the model index)
         assert (activations_0 == activations_1).all()
-        print("Are the activations the same? ", (activations_0 == activations_1).all())
+        logger.info("Are the activations the same? ", (activations_0 == activations_1).all())
 
     if len(activations_0.shape) == 2:
         activations_0 = activations_0.t()
@@ -240,7 +253,7 @@ def process_activations(args, activations, layer0_name, layer1_name):
     elif len(activations_0.shape) > 2:
         reorder_dim = [l for l in range(1, len(activations_0.shape))]
         reorder_dim.append(0)
-        print("reorder_dim is ", reorder_dim)
+        logger.info(f"reorder_dim is {reorder_dim}")
         activations_0 = activations_0.permute(*reorder_dim).contiguous()
         activations_1 = activations_1.permute(*reorder_dim).contiguous()
 
@@ -252,7 +265,6 @@ def get_acts_wassersteinized_layers_modularized(
     networks, 
     activations, 
     eps=1e-7, 
-    train_loader=None, 
     test_loader=None,
     input_dim=17
 ):
@@ -268,17 +280,9 @@ def get_acts_wassersteinized_layers_modularized(
     :return: list of layer weights 'wassersteinized'
     '''
 
-
     avg_aligned_layers, aligned_layers, T_vars = [], OrderedDict(), OrderedDict()
     T_var = None
-    if args.handle_skips:
-        skip_T_var = None
-        skip_T_var_idx = -1
-        residual_T_var = None
-        residual_T_var_idx = -1
 
-    marginals_beta = None
-    # print(list(networks[0].parameters()))
     previous_layer_shape = None
     num_layers = len(list(zip(networks[0].parameters(), networks[1].parameters())))
     ground_metric_object = GroundMetric(args)
@@ -296,30 +300,15 @@ def get_acts_wassersteinized_layers_modularized(
     incoming_layer_aligned = True # for input
     while idx < num_layers:
         ((layer0_name, fc_layer0_weight), (layer1_name, fc_layer1_weight)) = networks_named_params[idx]
-    # for idx,  in \
-    #         enumerate(zip(network0_named_params, network1_named_params)):
-        print("\n--------------- At layer index {} ------------- \n ".format(idx))
-        # layer shape is out x in
-        # assert fc_layer0_weight.shape == fc_layer1_weight.shape
-        # assert _check_layer_sizes(args, idx, fc_layer0_weight.shape, fc_layer1_weight.shape, num_layers)
-        print("Previous layer shape is ", previous_layer_shape)
+        logger.info("\n--------------- At layer index {} ------------- \n ".format(idx))
+        logger.info(f"Previous layer shape is {previous_layer_shape}")
         previous_layer_shape = fc_layer1_weight.shape
 
         # will have shape layer_size x act_num_samples
         # layer0_name_reduced = _reduce_layer_name(layer0_name)
         # layer1_name_reduced = _reduce_layer_name(layer1_name)
 
-        # print("let's see the difference in layer names", layer0_name.replace('.' + layer0_name.split('.')[-1], ''), layer0_name_reduced)
-        # print(activations[0][layer0_name.replace('.' + layer0_name.split('.')[-1], '')].shape, 'shape of activations generally')
-        # for conv layer I need to make the act_num_samples dimension the last one, but it has the intermediate dimensions for
-        # height and width of channels, so that won't work.
-        # So convert (num_samples, layer_size, ht, wt) -> (layer_size, ht, wt, num_samples)
-
         activations_0, activations_1 = process_activations(args, activations, layer0_name, layer1_name)
-
-        # print("activations for 1st model are ", activations_0)
-        # print("activations for 2nd model are ", activations_1)
-
 
         assert activations_0.shape[0] == fc_layer0_weight.shape[0], \
             f'activations_0.shape[0] {activations_0.shape[0]} fc_layer0_weight.shape[0] {fc_layer0_weight.shape[0]}'
@@ -334,120 +323,87 @@ def get_acts_wassersteinized_layers_modularized(
 
         layer0_shape = fc_layer0_weight.shape
         layer_shape = fc_layer1_weight.shape
-        if len(layer_shape) > 2:
-            is_conv = True
-        else:
-            is_conv = False
 
-        fc_layer0_weight_data = _get_layer_weights(fc_layer0_weight, is_conv)
-        fc_layer1_weight_data = _get_layer_weights(fc_layer1_weight, is_conv)
+        assert len(layer0_shape) == len(layer_shape)
+        assert len(layer0_shape) == 2
+
+        fc_layer0_weight_data = _get_layer_weights(fc_layer0_weight, is_conv=False)
+        fc_layer1_weight_data = _get_layer_weights(fc_layer1_weight, is_conv=False)
 
         if idx == 0 or incoming_layer_aligned:
             aligned_wt = fc_layer0_weight_data
-
         else:
+            logger.info(f"shape of layer: model 0 {fc_layer0_weight_data.shape}")
+            logger.info(f"shape of layer: model 1 {fc_layer0_weight_data.shape}")
 
-            print("shape of layer: model 0", fc_layer0_weight_data.shape)
-            print("shape of layer: model 1", fc_layer1_weight_data.shape)
-
-            print("shape of activations: model 0", activations_0.shape)
-            print("shape of activations: model 1", activations_1.shape)
+            logger.info(f"shape of activations: model 0 {activations_0.shape}")
+            logger.info(f"shape of activations: model 1 {activations_1.shape}")
 
 
-            print("shape of previous transport map", T_var.shape)
+            logger.info(f"shape of previous transport map {T_var.shape}")
 
-            # aligned_wt = None, this caches the tensor and causes OOM
-            if is_conv:
-                if args.handle_skips:
-                    assert len(layer0_shape) == 4
-                    # save skip_level transport map if there is block ahead
-                    if layer0_shape[1] != layer0_shape[0]:
-                        if not (layer0_shape[2] == 1 and layer0_shape[3] == 1):
-                            print(f'saved skip T_var at layer {idx} with shape {layer0_shape}')
-                            skip_T_var = T_var.clone()
-                            skip_T_var_idx = idx
-                        else:
-                            print(
-                                f'utilizing skip T_var saved from layer layer {skip_T_var_idx} with shape {skip_T_var.shape}')
-                            # if it's a shortcut (128, 64, 1, 1)
-                            residual_T_var = T_var.clone()
-                            residual_T_var_idx = idx  # use this after the skip
-                            T_var = skip_T_var
-                        print("shape of previous transport map now is", T_var.shape)
-                    else:
-                        if residual_T_var is not None and (residual_T_var_idx == (idx - 1)):
-                            T_var = (T_var + residual_T_var) / 2
-                            print("averaging multiple T_var's")
-                        else:
-                            print("doing nothing for skips")
-                T_var_conv = T_var.unsqueeze(0).repeat(fc_layer0_weight_data.shape[2], 1, 1)
-                aligned_wt = torch.bmm(fc_layer0_weight_data.permute(2, 0, 1), T_var_conv).permute(1, 2, 0)
-
-            else:
-                if 'bias' in layer0_name:
-                    aligned_wt = torch.matmul(fc_layer0_weight_data, T_var).t()
-                elif fc_layer0_weight_data.shape[1] != T_var.shape[0]:
-                    print("shape of fc_layer0_weight_data", fc_layer0_weight_data.shape)
-                    print("shape of T_var", T_var.shape)
-                    if fc_layer0_weight_data.shape[1] == 2 * T_var.shape[0]:
-                        # Handles cat connections of DynEdgeConv nn's first layer: same T_var twise
-                        temp_T_var = [T_var, T_var]
-                    elif fc_layer0_weight_data.shape[1] == 3 * T_var.shape[0]:
-                        # Handles cat connections of DynEdgeConv readout for 3 global poolings
-                        temp_T_var = [T_var, T_var, T_var]
-                    else:
-                        postproc_T_vars = \
-                            [torch.eye(input_dim).cuda()] + \
-                            [x for name, x in T_vars.items() if '2.weight' in name]
-                        if fc_layer0_weight_data.shape[1] == sum(x.shape[0] for x in postproc_T_vars):
-                            # Handles cat connections of DynEdge cat of conv layers: 
-                            # input layer + 4 T_var's of conv layers' biases
-                            temp_T_var = postproc_T_vars
-                        else:
-                            raise ValueError(
-                                f'size mismatch for DynEdge: '
-                                f'fc_layer0_weight_data.shape == {fc_layer0_weight_data.shape},'
-                                f' T_var.shape == {T_var.shape}'
-                            )
-                    temp_T_var = torch.block_diag(*temp_T_var)
-                    aligned_wt = torch.matmul(fc_layer0_weight_data, temp_T_var)
+            if 'bias' in layer0_name:
+                aligned_wt = torch.matmul(fc_layer0_weight_data, T_var).t()
+            elif fc_layer0_weight_data.shape[1] != T_var.shape[0]:
+                logger.info(f"shape of fc_layer0_weight_data {fc_layer0_weight_data.shape}")
+                logger.info(f"shape of T_var {T_var.shape}")
+                if fc_layer0_weight_data.shape[1] == 2 * T_var.shape[0]:
+                    # Handles cat connections of DynEdgeConv nn's first layer: same T_var twise
+                    temp_T_var = [T_var, T_var]
+                elif fc_layer0_weight_data.shape[1] == 3 * T_var.shape[0]:
+                    # Handles cat connections of DynEdgeConv readout for 3 global poolings
+                    temp_T_var = [T_var, T_var, T_var]
                 else:
-                    aligned_wt = torch.matmul(fc_layer0_weight_data, T_var)
+                    postproc_T_vars = \
+                        [torch.eye(input_dim).cuda()] + \
+                        [x for name, x in T_vars.items() if '2.weight' in name]
+                    if fc_layer0_weight_data.shape[1] == sum(x.shape[0] for x in postproc_T_vars):
+                        # Handles cat connections of DynEdge cat of conv layers: 
+                        # input layer + 4 T_var's of conv layers' biases
+                        temp_T_var = postproc_T_vars
+                    else:
+                        raise ValueError(
+                            f'size mismatch for DynEdge: '
+                            f'fc_layer0_weight_data.shape == {fc_layer0_weight_data.shape},'
+                            f' T_var.shape == {T_var.shape}'
+                        )
+                temp_T_var = torch.block_diag(*temp_T_var)
+                aligned_wt = torch.matmul(fc_layer0_weight_data, temp_T_var)
+            else:
+                aligned_wt = torch.matmul(fc_layer0_weight_data, T_var)
 
 
         #### Refactored ####
-
-            if args.update_acts:
-                assert args.second_model_name is None
-                activations_0, activations_1 = _get_updated_acts_v0(args, layer_shape, aligned_wt,
-                                                                    model0_aligned_layers, networks,
-                                                                    test_loader, [layer0_name, layer1_name])
+        if args.update_acts:
+            assert args.second_model_name is None
+            activations_0, activations_1 = _get_updated_acts_v0(args, layer_shape, aligned_wt,
+                                                                model0_aligned_layers, networks,
+                                                                test_loader, [layer0_name, layer1_name])
 
         if args.importance is None or (idx == num_layers -1):
             mu = get_histogram(args, 0, mu_cardinality, layer0_name)
             nu = get_histogram(args, 1, nu_cardinality, layer1_name)
         else:
             # mu = _get_neuron_importance_histogram(args, aligned_wt, is_conv)
-            mu = _get_neuron_importance_histogram(args, fc_layer0_weight_data, is_conv)
-            nu = _get_neuron_importance_histogram(args, fc_layer1_weight_data, is_conv)
-            print(mu, nu)
+            mu = _get_neuron_importance_histogram(args, fc_layer0_weight_data, is_conv=False)
+            nu = _get_neuron_importance_histogram(args, fc_layer1_weight_data, is_conv=False)
+            logger.info(f"mu is {mu}, nu is {nu}")
             assert args.proper_marginals
 
-        if args.act_bug:
-            # bug from before (didn't change the activation part)
-            # only for reproducing results from previous version
-            M0 = ground_metric_object.process(
-                aligned_wt.contiguous().view(aligned_wt.shape[0], -1),
-                fc_layer1_weight_data.view(fc_layer1_weight_data.shape[0], -1)
-            )
-        else:
-            # debugged part
-            print("Refactored ground metric calc")
-            M0, M1 = _process_ground_metric_from_acts(args, is_conv, ground_metric_object,
-                                                      [activations_0, activations_1])
+        logger.info("Refactored ground metric calc")
+        M0, M1 = _process_ground_metric_from_acts(
+            args, 
+            False,
+            ground_metric_object,
+            [activations_0, activations_1]
+        )
 
-            print("# of ground metric features in 0 is  ", (activations_0.view(activations_0.shape[0], -1)).shape[1])
-            print("# of ground metric features in 1 is  ", (activations_1.view(activations_1.shape[0], -1)).shape[1])
+        logger.info(
+            f"# of ground metric features in 0 is {(activations_0.view(activations_0.shape[0], -1)).shape[1]}", 
+        )
+        logger.info(
+            f"# of ground metric features in 1 is {(activations_1.view(activations_1.shape[0], -1)).shape[1]}", 
+        )
 
         if args.debug and not args.gromov:
             # bug from before (didn't change the activation part)
@@ -455,69 +411,82 @@ def get_acts_wassersteinized_layers_modularized(
                 aligned_wt.contiguous().view(aligned_wt.shape[0], -1),
                 fc_layer1_weight_data.view(fc_layer1_weight_data.shape[0], -1)
             )
-            print("Frobenius norm of old (i.e. bug involving wts) and new are ",
-                  torch.norm(M_old, 'fro'), torch.norm(M0, 'fro'))
-            print("Frobenius norm of difference between ground metric wrt old ",
-                  torch.norm(M0 - M_old, 'fro') / torch.norm(M_old, 'fro'))
+            logger.info(
+                f"Frobenius norm of old (i.e. bug involving wts) and new are "
+                f"{torch.norm(M_old, 'fro')} {torch.norm(M0, 'fro')}",
+            )
+            logger.info(
+                f"Frobenius norm of difference between ground metric wrt old "
+                f"{torch.norm(M0 - M_old, 'fro') / torch.norm(M_old, 'fro')}",
+            )
 
-            print("ground metric old (i.e. bug involving wts) is ", M_old)
-            print("ground metric new is ", M0)
+            logger.info(
+                f"ground metric old (i.e. bug involving wts) is {M_old}")
+            logger.info(
+                f"ground metric new is {M0}")
 
         ####################
 
         if args.same_model!=-1:
-            print("Checking ground metric matrix in case of same models")
+            logger.info("Checking ground metric matrix in case of same models")
             if not args.gromov:
-                print(M0)
+                logger.info(f"M0 is {M0}")
             else:
-                print(M0, M1)
+                logger.info(f"M0 is {M0}, M1 is {M1}")
 
         if args.skip_last_layer and idx == (num_layers - 1):
-
             if args.skip_last_layer_type == 'average':
-                print("Simple averaging of last layer weights. NO transport map needs to be computed")
+                logger.info(
+                    "Simple averaging of last layer weights. NO transport map needs to be computed"
+                )
                 if args.ensemble_step != 0.5:
-                    print("taking baby steps (even in skip) ! ")
+                    logger.info("taking baby steps (even in skip) ! ")
                     avg_aligned_layers.append((1-args.ensemble_step) * aligned_wt +
                                               args.ensemble_step * fc_layer1_weight)
                 else:
                     avg_aligned_layers.append(((aligned_wt + fc_layer1_weight)/2))
                 aligned_layers[layer0_name] = aligned_wt
             elif args.skip_last_layer_type == 'second':
-                print("Just giving the weights of the second model. NO transport map needs to be computed")
+                logger.info(
+                    "Just giving the weights of the second model. "
+                    "NO transport map needs to be computed"
+                )
                 avg_aligned_layers.append(fc_layer1_weight)
                 aligned_layers[layer0_name] = fc_layer1_weight
 
             return avg_aligned_layers, aligned_layers, T_vars
 
-        print("ground metric (m0) is ", M0)
+        logger.info(f"ground metric (m0) is {M0}")
 
         T_var = _get_current_layer_transport_map(args, mu, nu, M0, M1, idx=idx, layer_shape=layer_shape, eps=eps, layer_name=layer0_name)
-
         T_var, marginals = _compute_marginals(args, T_var, device, eps=eps)
 
         scale = fc_layer0_weight_data.shape[1] / fc_layer1_weight_data.shape[1]
         if not (idx == 0 or idx == (num_layers - 1)):
             scale = scale ** 0.5
-        print('scale is ', scale)
+        logger.info(f'scale is {scale}')
         T_var = T_var * scale
 
         T_vars[layer0_name] = T_var
 
         if args.debug:
             if idx == (num_layers - 1):
-                print("there goes the last transport map: \n ", T_var)
-                print("and before marginals it is ", T_var/marginals)
+                logger.info(f"there goes the last transport map: \n {T_var}")
+                logger.info(f"and before marginals it is \n {T_var/marginals}")
             else:
-                print("there goes the transport map at layer {}: \n ".format(idx), T_var)
+                logger.info("there goes the transport map at layer {}: \n {}".format(idx,  T_var))
 
-        print("Ratio of trace to the matrix sum: ", torch.trace(T_var) / torch.sum(T_var))
-        print("Here, trace is {} and matrix sum is {} ".format(torch.trace(T_var), torch.sum(T_var)))
+        logger.info(
+            f"Ratio of trace to the matrix sum: {torch.trace(T_var) / torch.sum(T_var)}"
+        )
+        logger.info(
+            "Here, trace is {} and matrix sum is {} ".format(torch.trace(T_var), torch.sum(T_var))
+        )
         setattr(args, 'trace_sum_ratio_{}'.format(layer0_name), (torch.trace(T_var) / torch.sum(T_var)).item())
 
         if args.past_correction:
-            print("Shape of aligned wt is ", aligned_wt.shape)
-            print("Shape of fc_layer0_weight_data is ", fc_layer0_weight_data.shape)
+            logger.info(f"Shape of aligned wt is {aligned_wt.shape}")
+            logger.info(f"Shape of fc_layer0_weight_data is {fc_layer0_weight_data.shape}")
 
             t_fc0_model = torch.matmul(T_var.t(), aligned_wt.contiguous().view(aligned_wt.shape[0], -1))
         else:
@@ -525,19 +494,13 @@ def get_acts_wassersteinized_layers_modularized(
 
         # Average the weights of aligned first layers
         if args.ensemble_step != 0.5:
-            print("taking baby steps! ")
+            logger.info("taking baby steps! ")
             geometric_fc = (1 - args.ensemble_step) * t_fc0_model + \
                            args.ensemble_step * fc_layer1_weight_data.view(fc_layer1_weight_data.shape[0], -1)
         else:
             geometric_fc = (t_fc0_model + fc_layer1_weight_data.view(fc_layer1_weight_data.shape[0], -1)) / 2
-        if is_conv and layer_shape != geometric_fc.shape:
-            geometric_fc = geometric_fc.view(layer_shape)
         avg_aligned_layers.append(geometric_fc)
         aligned_layers[layer0_name] = t_fc0_model
-
-
-        # print("The averaged parameters are :", geometric_fc)
-        # print("The model0 and model1 parameters were :", fc_layer0_weight.data, fc_layer1_weight.data)
 
         if args.update_acts or args.eval_aligned:
             assert args.second_model_name is None
@@ -545,18 +508,15 @@ def get_acts_wassersteinized_layers_modularized(
             # hence there is no point in having them here
             # so instead call the compute_activations script and pass it the model0 aligned layers
             # and also the aligned weight computed (which has been aligned via the prev T map, i.e. incoming edges).
-            if is_conv and layer_shape != t_fc0_model.shape:
-                t_fc0_model = t_fc0_model.view(layer_shape)
             model0_aligned_layers.append(t_fc0_model)
             _, acc = update_model(args, networks[0], model0_aligned_layers, test=True,
                                   test_loader=test_loader, idx=0)
-            print("For layer idx {}, accuracy of the updated model is {}".format(idx, acc))
+            logger.info("For layer idx {}, accuracy of the updated model is {}".format(idx, acc))
             setattr(args, 'model0_aligned_acc_layer_{}'.format(str(idx)), acc)
             if idx == (num_layers - 1):
                 setattr(args, 'model0_aligned_acc', acc)
 
         incoming_layer_aligned = False
-        next_aligned_wt_reshaped = None
 
         # remove cached variables to prevent out of memory
         activations_0 = None
@@ -567,7 +527,6 @@ def get_acts_wassersteinized_layers_modularized(
         fc_layer1_weight_data = None
         M0 = None
         M1 = None
-        cpuM = None
 
         idx += 1
     return avg_aligned_layers, aligned_layers, T_vars
@@ -604,7 +563,7 @@ def map_model(args, model_from, model_to, dataloader, n_samples):
             layer_names=layer_names
         )
         _, mapped_state_dict, _ = get_acts_wassersteinized_layers_modularized(
-            args, models, activations, train_loader=dataloader, test_loader=None)
+            args, models, activations, test_loader=None)
         
     mapped_state_dict = {
         k: v[:, 0] if 'bias' in k else v for k, v in mapped_state_dict.items()
@@ -619,6 +578,7 @@ def map_model(args, model_from, model_to, dataloader, n_samples):
 def main(args):
     models = {}
 
+    config['bias'] = False
     config_from = deepcopy(config)
     config_from['dynedge']['dynedge_layer_sizes'] = [(128, 256), (336, 256), (336, 256), (336, 256)]
 
