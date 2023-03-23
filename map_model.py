@@ -526,7 +526,7 @@ layer_names = {
 }
 
 
-def map_model(args, model_from, model_to, dataloader, n_samples):
+def map_model(args, model_from, model_to, dataloader, n_samples, size_multiplier):
     models = [
         model_from.cuda(),
         model_to.cuda(), 
@@ -542,6 +542,12 @@ def map_model(args, model_from, model_to, dataloader, n_samples):
         )
         _, mapped_state_dict, _ = get_acts_wassersteinized_layers_modularized(
             args, models, activations, test_loader=None)
+
+    # TODO fix scaling
+    mapped_state_dict = {
+        k: ((v * (size_multiplier) ** 0.5) if k.startswith('_gnn._conv_layers.0.nn.0') else v) 
+        for k, v in mapped_state_dict.items()
+    }
         
     mapped_state_dict = {
         k: v.squeeze() if 'bias' in k else v for k, v in mapped_state_dict.items()
@@ -596,7 +602,8 @@ def main(args):
         models['from'], 
         models['to'], 
         train_dataloader, 
-        args.act_num_samples
+        args.act_num_samples,
+        args.size_multiplier
     )
     models['mapped'].save_state_dict(str(args.mapped_model_save_dir / 'state_dict.pth'))
 
