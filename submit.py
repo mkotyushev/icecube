@@ -64,8 +64,8 @@ def main(args):
     )
 
     df['event_id'] = df['event_id'].astype(int)
-    df = prepare_dataframe(df, angle_post_fix='', vec_post_fix='')
     df = df.sort_values(by='event_id')
+    df = prepare_dataframe(df, angle_post_fix='', vec_post_fix='')
     df.to_csv(args.save_path)
 
 
