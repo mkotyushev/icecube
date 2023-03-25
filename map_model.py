@@ -44,7 +44,7 @@ truth = TRUTH.KAGGLE
 
 def get_args():
     parser = get_parser()
-    parser.add_argument('size_multiplier', type=int, default=1)
+    parser.add_argument('size_multiplier', type=float, default=1.0)
     parser.add_argument('from_model_state_dict_path', type=Path)
     parser.add_argument('to_model_state_dict_path', type=Path)
     parser.add_argument('mapped_model_save_dir', type=Path)
@@ -282,7 +282,7 @@ def get_acts_wassersteinized_layers_modularized(
     :return: list of layer weights 'wassersteinized'
     '''
 
-    avg_aligned_layers, aligned_layers, T_vars = [], OrderedDict(), OrderedDict()
+    avg_aligned_layers, aligned_layers, T_vars = OrderedDict(), OrderedDict(), OrderedDict()
     T_var = None
 
     previous_layer_shape = None
@@ -426,14 +426,14 @@ def get_acts_wassersteinized_layers_modularized(
                 logger.info("\tSkipping last layer: average")
                 if args.ensemble_step != 0.5:
                     logger.info("taking baby steps (even in skip) ! ")
-                    avg_aligned_layers.append((1-args.ensemble_step) * aligned_wt +
+                    avg_aligned_layers[layer0_name] = ((1-args.ensemble_step) * aligned_wt +
                                             args.ensemble_step * fc_layer1_weight)
                 else:
-                    avg_aligned_layers.append(((aligned_wt + fc_layer1_weight)/2))
+                    avg_aligned_layers[layer0_name] = (((aligned_wt + fc_layer1_weight)/2))
                 aligned_layers[layer0_name] = aligned_wt
             elif args.skip_last_layer_type == 'second':
                 logger.info("\tSkipping last layer: second")
-                avg_aligned_layers.append(fc_layer1_weight)
+                avg_aligned_layers[layer0_name] = (fc_layer1_weight)
                 aligned_layers[layer0_name] = fc_layer1_weight
         else:
             logger.info(f"Not skipping because last layer {layer0_name}")
@@ -490,7 +490,7 @@ def get_acts_wassersteinized_layers_modularized(
                             args.ensemble_step * fc_layer1_weight_data.view(fc_layer1_weight_data.shape[0], -1)
             else:
                 geometric_fc = (t_fc0_model + fc_layer1_weight_data.view(fc_layer1_weight_data.shape[0], -1)) / 2
-            avg_aligned_layers.append(geometric_fc)
+            avg_aligned_layers[layer0_name] = (geometric_fc)
             aligned_layers[layer0_name] = t_fc0_model
             incoming_layer_aligned = False
             
@@ -572,7 +572,7 @@ def main(args):
 
     config_to = deepcopy(config)
     config_to['dynedge']['dynedge_layer_sizes'] = [
-        (x * args.size_multiplier, y * args.size_multiplier) 
+        (int(x * args.size_multiplier), int(y * args.size_multiplier)) 
         for x, y in [(128, 256), (336, 256), (336, 256), (336, 256)]
     ]
 
