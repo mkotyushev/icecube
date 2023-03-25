@@ -23,7 +23,7 @@ truth = TRUTH.KAGGLE
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('pdf_save_path', type=str, default='mapping_results.pdf')
-    parser.add_argument('size_multiplier', type=int, default=1)
+    parser.add_argument('size_multiplier', type=float, default=1.0)
     parser.add_argument('from_model_state_dict_path', type=str)
     parser.add_argument('to_model_state_dict_path', type=str)
     parser.add_argument('mapped_model_state_dict_path', type=str)
@@ -60,7 +60,7 @@ def main(args):
             config = deepcopy(base_config)
             if model_name in {'to', 'mapped'}:
                 config['dynedge']['dynedge_layer_sizes'] = [
-                    (x * args.size_multiplier, y * args.size_multiplier) 
+                    (int(x * args.size_multiplier), int(y * args.size_multiplier)) 
                     for x, y in [(128, 256), (336, 256), (336, 256), (336, 256)]
                 ]
             config['batch_size'] = 512
@@ -91,7 +91,7 @@ def main(args):
             plt.hist(result['angular_error'], 
                 bins = np.arange(0,np.pi*2, 0.05), 
                 histtype = 'step', 
-                label = f'{model_name} mean AE: {np.round(result["angular_error"].mean(),2)}'
+                label = f'{model_name} mean AE: {result["angular_error"].mean():.3f}'
             )
             plt.xlabel('Angular Error [rad.]', size = 15)
             plt.ylabel('Counts', size = 15)
