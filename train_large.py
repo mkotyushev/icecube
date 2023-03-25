@@ -12,12 +12,14 @@ from graphnet.data.sqlite.sqlite_dataset import SQLiteDataset, SQLiteDatasetMaxN
 
 from icecube_utils import (
     CancelAzimuthByPredictionTransform,
+    ExpLRSchedulerPiece,
+    LinearLRSchedulerPiece,
     OneOfTransform,
     RotateAngleTransform,
     train_dynedge_blocks,
     train_dynedge_from_scratch,
     FlipTimeTransform,
-    FlipCoordinateTransform
+    FlipCoordinateTransform,
 )
 
 
@@ -26,7 +28,7 @@ def parse_args():
     parser.add_argument('--state-dict-path', type=Path, default=None)
     parser.add_argument('--model-save-dir', type=Path, default=None)
     parser.add_argument('--max-epochs', type=int, default=10)
-    parser.add_argument('--size-multiplier', type=int, default=1)
+    parser.add_argument('--size-multiplier', type=float, default=1.0)
     parser.add_argument('--batch-size', type=int, default=100)
     parser.add_argument('--accumulate-grad-batches', type=int, default=1)
     parser.add_argument('--seed', type=int, default=0)
@@ -48,6 +50,7 @@ def parse_args():
     parser.add_argument('--block-output-aggregation', type=str, choices=['mean', 'sum'], default='sum')
     parser.add_argument('--enable-augmentations', action='store_true')
     parser.add_argument('--lr-onecycle-factors', type=float, nargs=3, default=[1e-02, 1, 1e-02])
+    parser.add_argument('--lr-schedule-type', type=str, default='linear', choices=['linear', 'exp'])
     args = parser.parse_args()
     return args
 
@@ -72,8 +75,8 @@ features = FEATURES.KAGGLE
 truth = ['zenith', 'azimuth']
 
 config = {
-        # "path": '/workspace/icecube/data/batch_1.db',
-        # "inference_database_path": '/workspace/icecube/data/batch_51.db',
+        # "path": '/workspace/data2/batch_14.db',
+        # "inference_database_path": '/workspace/data2/batch_656.db',
         "path": '/workspace/icecube/data/fold_0.db',
         "inference_database_path": '/workspace/icecube/data/fold_0_val.db',
         "pulsemap": 'pulse_table',
@@ -111,7 +114,10 @@ config = {
             "eps": 1e-03
         },
         "scheduler_kwargs": {
-            "factors": [1e-02, 1, 1e-02],
+            "pieces": [
+                LinearLRSchedulerPiece(1e-2, 1),
+                LinearLRSchedulerPiece(1, 1e-2),
+            ]
         },
         'max_n_pulses': {
             'max_n_pulses': 200,
@@ -139,7 +145,7 @@ if __name__ == '__main__':
     config['batch_size'] = args.batch_size
     config['accumulate_grad_batches'] = args.accumulate_grad_batches
     config['dynedge']['dynedge_layer_sizes'] = [
-        (x * args.size_multiplier, y * args.size_multiplier) 
+        (int(x * args.size_multiplier), int(y * args.size_multiplier)) 
         for x, y in [(128, 256), (336, 256), (336, 256), (336, 256)]
     ]
     config['max_n_pulses']['max_n_pulses_strategy'] = args.max_n_pulses_strategy
@@ -156,8 +162,17 @@ if __name__ == '__main__':
     else:
         raise ValueError(f'Unknown mode {args.mode}')
 
-    # Set LR one-cycle factors
-    config['scheduler_kwargs']['factors'] = args.lr_onecycle_factors
+    # Set LR schedule
+    if args.lr_schedule_type == 'linear':
+        config['scheduler_kwargs']['pieces'] = [
+            LinearLRSchedulerPiece(args.lr_onecycle_factors[0], args.lr_onecycle_factors[1]),
+            LinearLRSchedulerPiece(args.lr_onecycle_factors[1], args.lr_onecycle_factors[2]),
+        ]
+    elif args.lr_schedule_type == 'exp':
+        config['scheduler_kwargs']['pieces'] = [
+            LinearLRSchedulerPiece(args.lr_onecycle_factors[0], args.lr_onecycle_factors[1]),
+            ExpLRSchedulerPiece(args.lr_onecycle_factors[1], args.lr_onecycle_factors[2], decay=0.2),
+        ]
     
     # Convert patience from epochs to validation checks
     config['early_stopping_patience'] = int(

@@ -16,6 +16,7 @@ from pytorch_lightning.callbacks import (
     LearningRateMonitor
 )
 from torch.optim.adamw import AdamW
+from torch.optim.lr_scheduler import LRScheduler
 from torch.nn import Module, Linear, ModuleList
 from torch import Tensor
 from graphnet.data.constants import FEATURES, TRUTH
@@ -24,7 +25,7 @@ from graphnet.models.detector.icecube import IceCubeKaggle
 from graphnet.models.gnn import DynEdge
 from graphnet.models.graph_builders import KNNGraphBuilder
 from graphnet.models.task.reconstruction import AngleReconstructionCos, AngleReconstructionSinCos, AngleReconstructionSincosWithKappa, AzimuthReconstruction, AzimuthReconstructionWithKappa, DirectionReconstruction, DirectionReconstructionWithKappa, ZenithAzimuthReconstruction, ZenithReconstructionWithKappa
-from graphnet.training.callbacks import ProgressBar, PiecewiseLinearLR
+from graphnet.training.callbacks import ProgressBar
 from graphnet.training.loss_functions import CosineLoss, CosineLoss3D, EuclidianDistanceLossCos, EuclidianDistanceLossSinCos, VonMisesFisher2DLoss, VonMisesFisher2DLossSinCos, VonMisesFisher3DLoss
 from graphnet.training.labels import Direction
 from graphnet.training.utils import make_dataloader
@@ -33,6 +34,81 @@ from graphnet.utilities.logging import get_logger
 
 # Constants
 logger = get_logger()
+
+
+class ExpLRSchedulerPiece:
+    def __init__(self, start_lr, stop_lr, decay=0.2):
+        self.start_lr = start_lr
+        self.scale = (start_lr - stop_lr) / (start_lr - start_lr * np.exp(-1.0 / decay))
+        self.decay = decay
+
+    def __call__(self, pct):
+        # Parametrized so that in 0.0 it is start_lr and 
+        # in 1.0 it is stop_lr
+        # shift -> scale -> shift
+        return \
+            (
+                self.start_lr * np.exp(-pct / self.decay) - 
+                self.start_lr
+            ) * self.scale + \
+        self.start_lr
+    
+
+class ConstLRSchedulerPiece:
+    def __init__(self, lr):
+        self.lr = lr
+
+    def __call__(self, pct):
+        return self.lr
+    
+
+class LinearLRSchedulerPiece:
+    def __init__(self, start_lr, stop_lr):
+        self.start_lr = start_lr
+        self.stop_lr = stop_lr
+
+    def __call__(self, pct):
+        return self.start_lr + pct * (self.stop_lr - self.start_lr)
+
+
+class PiecewiceFactorsLRScheduler(LRScheduler):
+    """
+    Piecewise learning rate scheduler.
+
+    Each piece operates between two milestones. The first milestone is always 0.
+    Given percent of the way through the current piece, piece yields the learning rate.
+    Last piece is continued indefinitely for epoch > last milestone.
+    """
+    def __init__(self, optimizer, milestones, pieces, last_epoch=-1):
+        assert len(milestones) - 1 == len(pieces)
+        assert milestones[0] == 0
+        assert all(milestones[i] < milestones[i + 1] for i in range(len(milestones) - 1))
+
+        self.milestones = milestones
+        self.pieces = pieces
+        self._current_piece_index = 0
+
+        super().__init__(optimizer, last_epoch)
+    
+    def get_lr(self):
+        if (
+            not self._current_piece_index == len(self.pieces) - 1 and 
+            self.last_epoch > self.milestones[self._current_piece_index + 1]
+        ):
+            self._current_piece_index += 1
+
+        pct = (
+            self.last_epoch - 
+            self.milestones[self._current_piece_index]
+        ) / (
+            self.milestones[self._current_piece_index + 1] - 
+            self.milestones[self._current_piece_index]
+        )
+
+        return [
+            self.pieces[self._current_piece_index](pct) * base_lr
+            for base_lr in self.base_lrs
+        ]
 
 
 def build_model(
@@ -252,6 +328,24 @@ def build_model(
         ]
         additional_attributes = [*config['truth'], 'event_id']
 
+
+    assert "scheduler_kwargs" in config and "pieces" in config["scheduler_kwargs"]
+
+    # Pytorch schedulers are parametrized on number of steps
+    # and not in percents, so scheduler_kwargs need to be
+    # constructed here
+    assert len(config["scheduler_kwargs"]["pieces"]) == 2, \
+        "Only 2 pieces one-cycle LR is supported for now"
+    scheduler_kwargs = {
+        # 0.5 epoch warmup piece + rest piece
+        "milestones": [
+            0,
+            len(train_dataloader) / 2,
+            len(train_dataloader) * config["fit"]["max_epochs"],
+        ],
+        "pieces": config["scheduler_kwargs"]["pieces"],
+    }
+
     model = StandardModel(
         detector=detector,
         gnn=gnn,
@@ -259,15 +353,8 @@ def build_model(
         tasks_weiths=config["tasks_weights"] if "tasks_weights" in config else None,
         optimizer_class=AdamW,
         optimizer_kwargs=config["optimizer_kwargs"],
-        scheduler_class=PiecewiseLinearLR,
-        scheduler_kwargs={
-            "milestones": [
-                0,
-                len(train_dataloader) / 2,
-                len(train_dataloader) * config["fit"]["max_epochs"],
-            ],
-            "factors": config["scheduler_kwargs"]["factors"],
-        },
+        scheduler_class=PiecewiceFactorsLRScheduler,
+        scheduler_kwargs=scheduler_kwargs,
         scheduler_config={
             "interval": "step",
         },
