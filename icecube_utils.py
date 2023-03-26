@@ -16,6 +16,7 @@ from pytorch_lightning.callbacks import (
     LearningRateMonitor
 )
 from torch.optim.adamw import AdamW
+from torch.optim import Adam
 from torch.optim.lr_scheduler import LRScheduler
 from torch.nn import Module, Linear, ModuleList
 from torch import Tensor
@@ -1285,8 +1286,21 @@ def Task_forward(self, x: Union[Tensor, Data], coeffs_t) -> Union[Tensor, Data]:
 
 
 class SimplexNetGraphnet(Model):
-    def __init__(self, architecture, n_verts, LMBD, base_model, nsample):
+    def __init__(
+        self, 
+        architecture, 
+        n_verts, 
+        LMBD, 
+        base_model, 
+        nsample,
+        optimizer_class: type = Adam,
+        optimizer_kwargs: Optional[Dict] = None,
+        scheduler_class: Optional[type] = None,
+        scheduler_kwargs: Optional[Dict] = None,
+        scheduler_config: Optional[Dict] = None,
+    ):
         super().__init__()
+        self.save_hyperparameters(ignore=['base_model'])
 
         self.reg_pars = []
         for ii in range(0, n_verts + 2):
@@ -1312,7 +1326,43 @@ class SimplexNetGraphnet(Model):
         self.nsample = nsample
         self.current_vol_reg = self.reg_pars[0]
 
-    def training_step(self, batch, batch_idx):
+        self._optimizer_class = optimizer_class
+        self._optimizer_kwargs = optimizer_kwargs or dict()
+        self._scheduler_class = scheduler_class
+        self._scheduler_kwargs = scheduler_kwargs or dict()
+        self._scheduler_config = scheduler_config or dict()
+
+    def configure_optimizers(self) -> Dict[str, Any]:
+        """Configure the model's optimizer(s)."""
+        optimizer = self._optimizer_class(
+            self.parameters(), **self._optimizer_kwargs
+        )
+        config = {
+            "optimizer": optimizer,
+        }
+        if self._scheduler_class is not None:
+            scheduler = self._scheduler_class(
+                optimizer, **self._scheduler_kwargs
+            )
+            config.update(
+                {
+                    "lr_scheduler": {
+                        "scheduler": scheduler,
+                        **self._scheduler_config,
+                    },
+                }
+            )
+        return config
+
+    def _get_batch_size(self, data: Data) -> int:
+        return torch.numel(torch.unique(data.batch))
+
+    def shared_step(self, batch: Data, batch_idx: int) -> Tensor:
+        """Perform shared step.
+
+        Applies the forward pass and the following loss calculation, shared
+        between the training and validation step.
+        """
         loss = 0
         for _ in range(self.nsample):
             output = self.simplex_model(batch)
@@ -1323,13 +1373,36 @@ class SimplexNetGraphnet(Model):
         log_vol = (vol + 1e-4).log()
         
         loss = loss - self.current_vol_reg * log_vol
-
         return loss
 
-    def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
-        return optimizer
+    def training_step(self, batch, batch_idx):
+        loss = self.shared_step(batch, batch_idx)
+        self.log(
+            "train_loss",
+            loss,
+            batch_size=self._get_batch_size(batch),
+            prog_bar=True,
+            on_epoch=True,
+            on_step=True,
+            sync_dist=True,
+        )
+
+        return loss
     
+    def validation_step(self, batch: Data, batch_idx: int) -> Tensor:
+        """Perform validation step."""
+        loss = self.shared_step(batch, batch_idx)
+        self.log(
+            "val_loss",
+            loss,
+            batch_size=self._get_batch_size(batch),
+            prog_bar=True,
+            on_epoch=True,
+            on_step=False,
+            sync_dist=True,
+        )
+        return loss
+
     def forward(self, data: Data) -> List[Union[Tensor, Data]]:
         return self.simplex_model(data)
 
@@ -1350,29 +1423,28 @@ class SimplexNetGraphnet(Model):
     ) -> None:
         """Fit `Model` using `pytorch_lightning.Trainer`."""
         self.train(mode=True)
-        for vertex_index in range(1, self.n_verts + 1):
-            self.current_vol_reg = self.reg_pars[vertex_index]
-            self.simplex_model.add_vert()
-            
-            self.train(mode=True)
-            self._construct_trainers(
-                max_epochs=max_epochs,
-                gpus=gpus,
-                callbacks=callbacks,
-                ckpt_path=ckpt_path,
-                logger=logger,
-                log_every_n_steps=log_every_n_steps,
-                gradient_clip_val=gradient_clip_val,
-                **trainer_kwargs,
-            )
-
-            try:
+        try:
+            for vertex_index in range(1, self.n_verts + 1):
+                self.current_vol_reg = self.reg_pars[vertex_index]
+                self.simplex_model.add_vert()
+                
+                self.train(mode=True)
+                self._construct_trainers(
+                    max_epochs=max_epochs,
+                    gpus=gpus,
+                    callbacks=callbacks,
+                    ckpt_path=ckpt_path,
+                    logger=logger,
+                    log_every_n_steps=log_every_n_steps,
+                    gradient_clip_val=gradient_clip_val,
+                    **trainer_kwargs,
+                )
                 self._trainer.fit(
                     self, train_dataloader, val_dataloader, ckpt_path=ckpt_path
                 )
-            except KeyboardInterrupt:
-                self.warning("[ctrl+c] Exiting gracefully.")
-                pass
+        except KeyboardInterrupt:
+            self.warning("[ctrl+c] Exiting gracefully.")
+            pass
 
 @patch('icecube_utils.StandardModel.forward', StandardModelGraphnet_forward)
 @patch('icecube_utils.DynEdge.forward', DynEdgeGraphnet_forward)
@@ -1395,12 +1467,35 @@ def train_dynedge_simplex(
         model = build_model(config, train_dataloader, fix_points)
         return model
 
+    assert "scheduler_kwargs" in config and "pieces" in config["scheduler_kwargs"]
+    # Pytorch schedulers are parametrized on number of steps
+    # and not in percents, so scheduler_kwargs need to be
+    # constructed here
+    assert len(config["scheduler_kwargs"]["pieces"]) == 2, \
+        "Only 2 pieces one-cycle LR is supported for now"
+    scheduler_kwargs = {
+        # 0.5 epoch warmup piece + rest piece
+        "milestones": [
+            0,
+            len(train_dataloader) / 2,
+            len(train_dataloader) * config["fit"]["max_epochs"],
+        ],
+        "pieces": config["scheduler_kwargs"]["pieces"],
+    }
+
     simplex_model_wrapper = SimplexNetGraphnet(
         architecture=build_model_simplex, 
         n_verts=config['simplex']['n_verts'], 
         LMBD=config['simplex']['LMBD'], 
         base_model=base_model, 
-        nsample=config['simplex']['nsample']
+        nsample=config['simplex']['nsample'],
+        optimizer_class=AdamW,
+        optimizer_kwargs=config["optimizer_kwargs"],
+        scheduler_class=PiecewiceFactorsLRScheduler,
+        scheduler_kwargs=scheduler_kwargs,
+        scheduler_config={
+            "interval": "step",
+        },
     )
     simplex_model_wrapper = train_dynedge(
         simplex_model_wrapper,
