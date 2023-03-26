@@ -1302,19 +1302,21 @@ class SimplexNetGraphnet(Model):
         super().__init__()
         self.save_hyperparameters(ignore=['base_model'])
 
-        self.reg_pars = []
-        for ii in range(0, n_verts + 2):
-            fix_pts = [True]*(ii + 1)
-            start_vert = len(fix_pts)
+        with torch.no_grad():
+            self.reg_pars = []
+            for ii in range(0, n_verts + 2):
+                fix_pts = [True]*(ii + 1)
+                start_vert = len(fix_pts)
 
-            out_dim = 10
-            simplex_model = SimplexNet(out_dim, architecture, n_vert=start_vert,
-                                fix_points=fix_pts)
-            simplex_model = simplex_model.cuda()
-            
-            log_vol = (simplex_model.total_volume() + 1e-4).log()
-            
-            self.reg_pars.append(max(float(LMBD)/log_vol, 1e-8))
+                out_dim = 10
+                simplex_model = SimplexNet(out_dim, architecture, n_vert=start_vert,
+                                    fix_points=fix_pts)
+                simplex_model = simplex_model.cuda()
+                
+                log_vol = (simplex_model.total_volume() + 1e-4).log()
+                
+                self.reg_pars.append(max(float(LMBD)/log_vol, 1e-8))
+                del simplex_model
         
         fix_pts = [True]
         n_vert = len(fix_pts)
@@ -1423,28 +1425,23 @@ class SimplexNetGraphnet(Model):
     ) -> None:
         """Fit `Model` using `pytorch_lightning.Trainer`."""
         self.train(mode=True)
-        try:
-            for vertex_index in range(1, self.n_verts + 1):
-                self.current_vol_reg = self.reg_pars[vertex_index]
-                self.simplex_model.add_vert()
-                
-                self.train(mode=True)
-                self._construct_trainers(
-                    max_epochs=max_epochs,
-                    gpus=gpus,
-                    callbacks=callbacks,
-                    ckpt_path=ckpt_path,
-                    logger=logger,
-                    log_every_n_steps=log_every_n_steps,
-                    gradient_clip_val=gradient_clip_val,
-                    **trainer_kwargs,
-                )
-                self._trainer.fit(
-                    self, train_dataloader, val_dataloader, ckpt_path=ckpt_path
-                )
-        except KeyboardInterrupt:
-            self.warning("[ctrl+c] Exiting gracefully.")
-            pass
+        for vertex_index in range(1, self.n_verts + 1):
+            self.current_vol_reg = self.reg_pars[vertex_index]
+            self.simplex_model.add_vert()
+            
+            super().fit(
+                train_dataloader=train_dataloader,
+                val_dataloader=val_dataloader,
+                max_epochs=max_epochs,
+                gpus=gpus,
+                callbacks=callbacks,
+                ckpt_path=ckpt_path,
+                logger=logger,
+                log_every_n_steps=log_every_n_steps,
+                gradient_clip_val=gradient_clip_val,
+                distribution_strategy='auto',
+                **trainer_kwargs
+            )
 
 @patch('icecube_utils.StandardModel.forward', StandardModelGraphnet_forward)
 @patch('icecube_utils.DynEdge.forward', DynEdgeGraphnet_forward)
