@@ -8,7 +8,7 @@ import os
 import torch
 from copy import deepcopy
 from mock import patch
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Union, Optional
 from pytorch_lightning.callbacks import (
     EarlyStopping, 
     GradientAccumulationScheduler,
@@ -19,8 +19,13 @@ from torch.optim.adamw import AdamW
 from torch.optim.lr_scheduler import LRScheduler
 from torch.nn import Module, Linear, ModuleList
 from torch import Tensor
+from torch_geometric.data import Data
+from torch_geometric.nn.pool import knn_graph
+from torch_geometric.typing import Adj, PairTensor
+from torch_geometric.nn import EdgeConv
 from graphnet.data.constants import FEATURES, TRUTH
 from graphnet.models import StandardModel
+from graphnet.models.components.layers import DynEdgeConv
 from graphnet.models.detector.icecube import IceCubeKaggle
 from graphnet.models.gnn import DynEdge
 from graphnet.models.graph_builders import KNNGraphBuilder
@@ -30,6 +35,11 @@ from graphnet.training.loss_functions import CosineLoss, CosineLoss3D, Euclidian
 from graphnet.training.labels import Direction
 from graphnet.training.utils import make_dataloader
 from graphnet.utilities.logging import get_logger
+from torch.utils.data import DataLoader
+from pytorch_lightning import Callback
+from pytorch_lightning.loggers.logger import Logger
+from simplex.models.simplex_models import SimplexNet, Linear as SimplexLinear
+from graphnet.models.model import Model
 
 
 # Constants
@@ -1137,3 +1147,265 @@ class CancelAzimuthByPredictionTransform(Transform):
         v = rotate(v, k, -angle)
         input = np.concatenate((v, input[:, 3:]), axis=1)
         return input, target
+
+
+# Replace all the models' callstacks so they can forward coeffs_t
+# down to simplex linear layers
+
+# https://stackoverflow.com/questions/10874432/possible-to-change-function-name-in-definition
+# necessary to make torch_geometric inspection modules happy again after mocking
+def rename(newname):
+    def decorator(f):
+        f.__name__ = newname
+        return f
+    return decorator
+
+@rename('forward')
+def StandardModelGraphnet_forward(self, data: Data, coeffs_t) -> List[Union[Tensor, Data]]:
+    """Forward pass, chaining model components."""
+    if self._coarsening:
+        data = self._coarsening(data)
+    data = self._detector(data)
+    x = self._gnn(data, coeffs_t)
+    preds = [task(x, coeffs_t) for task in self._tasks]
+    return preds
+    
+
+@rename('forward')
+def DynEdgeGraphnet_forward(self, data: Data, coeffs_t) -> Tensor:
+    """Apply learnable forward pass."""
+    # Convenience variables
+    x, edge_index, batch, n_pulses = data.x, data.edge_index, data.batch, data.n_pulses
+
+    global_variables = self._calculate_global_variables(
+        x,
+        edge_index,
+        batch,
+        torch.log10(n_pulses),
+    )
+
+    # Distribute global variables out to each node
+    if not self._add_global_variables_after_pooling:
+        distribute = (
+            batch.unsqueeze(dim=1) == torch.unique(batch).unsqueeze(dim=0)
+        ).type(torch.float)
+
+        global_variables_distributed = torch.sum(
+            distribute.unsqueeze(dim=2)
+            * global_variables.unsqueeze(dim=0),
+            dim=1,
+        )
+
+        x = torch.cat((x, global_variables_distributed), dim=1)
+
+    # DynEdge-convolutions
+    skip_connections = [x]
+    for conv_layer in self._conv_layers:
+        x, edge_index = conv_layer(x, edge_index, batch, coeffs_t)
+        skip_connections.append(x)
+
+    # Skip-cat
+    x = torch.cat(skip_connections, dim=1)
+
+    # Post-processing
+    x = self._post_processing(x, coeffs_t)
+
+    # (Optional) Global pooling
+    if self._global_pooling_schemes:
+        x = self._global_pooling(x, batch=batch)
+        if self._add_global_variables_after_pooling:
+            x = torch.cat(
+                [
+                    x,
+                    global_variables,
+                ],
+                dim=1,
+            )
+
+    # Read-out
+    x = self._readout(x, coeffs_t)
+
+    return x
+
+
+@rename('forward')
+def DynEdgeConvGraphnet_forward(
+    self, x: Tensor, edge_index: Adj, batch: Optional[Tensor] = None, 
+    coeffs_t: Optional[Tensor] = None
+) -> Tensor:
+    """Forward pass."""
+    # Standard EdgeConv forward pass
+    x = super(DynEdgeConv, self).forward(x, edge_index, coeffs_t)
+
+    # Recompute adjacency
+    edge_index = knn_graph(
+        x=x[:, self.features_subset],
+        k=self.nb_neighbors,
+        batch=batch,
+    ).to(self.device)
+
+    return x, edge_index
+
+
+@rename('forward')
+def EdgeConvGraphnet_forward(
+        self, 
+        x: Union[Tensor, PairTensor], 
+        edge_index: Adj, 
+        coeffs_t: Optional[Tensor] = None
+    ) -> Tensor:
+    if isinstance(x, Tensor):
+        x: PairTensor = (x, x)
+    # propagate_type: (x: PairTensor)
+    return self.propagate(edge_index, x=x, size=None, coeffs_t=coeffs_t)
+
+
+@rename('message')
+def EdgeConvGraphnet_message(self, x_i: Tensor, x_j: Tensor, coeffs_t: Optional[Tensor] = None) -> Tensor:
+    return self.nn(torch.cat([x_i, x_j - x_i], dim=-1), coeffs_t)
+
+
+@rename('forward')
+def SequentialGraphnet_forward(self, input, coeffs_t):
+    for module in self:
+        if isinstance(module, SimplexLinear):
+            input = module(input, coeffs_t)
+        else:
+            input = module(input)
+    return input
+
+
+@rename('forward')
+def Task_forward(self, x: Union[Tensor, Data], coeffs_t) -> Union[Tensor, Data]:
+    """Forward pass."""
+    self._regularisation_loss = 0  # Reset
+    x = self._affine(x, coeffs_t)
+    x = self._forward(x)
+    return self._transform_prediction(x)
+
+
+class SimplexNetGraphnet(Model):
+    def __init__(self, architecture, n_verts, LMBD, base_model, nsample):
+        super().__init__()
+
+        self.reg_pars = []
+        for ii in range(0, n_verts + 2):
+            fix_pts = [True]*(ii + 1)
+            start_vert = len(fix_pts)
+
+            out_dim = 10
+            simplex_model = SimplexNet(out_dim, architecture, n_vert=start_vert,
+                                fix_points=fix_pts)
+            simplex_model = simplex_model.cuda()
+            
+            log_vol = (simplex_model.total_volume() + 1e-4).log()
+            
+            self.reg_pars.append(max(float(LMBD)/log_vol, 1e-8))
+        
+        fix_pts = [True]
+        n_vert = len(fix_pts)
+        self.simplex_model = SimplexNet(10, architecture, n_vert=n_vert,
+                           fix_points=fix_pts).cuda()
+        self.simplex_model.import_base_parameters(base_model, 0)
+
+        self.n_verts = n_verts
+        self.nsample = nsample
+        self.current_vol_reg = self.reg_pars[0]
+
+    def training_step(self, batch, batch_idx):
+        loss = 0
+        for _ in range(self.nsample):
+            output = self.simplex_model(batch)
+            loss = loss + self.simplex_model.net.compute_loss(output, batch)
+        loss.div(self.nsample)
+
+        vol = self.simplex_model.total_volume()
+        log_vol = (vol + 1e-4).log()
+        
+        loss = loss - self.current_vol_reg * log_vol
+
+        return loss
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
+        return optimizer
+    
+    def forward(self, data: Data) -> List[Union[Tensor, Data]]:
+        return self.simplex_model(data)
+
+    def fit(
+        self,
+        train_dataloader: DataLoader,
+        val_dataloader: Optional[DataLoader] = None,
+        *,
+        max_epochs: int = 10,
+        gpus: Optional[Union[List[int], int]] = None,
+        callbacks: Optional[List[Callback]] = None,
+        ckpt_path: Optional[str] = None,
+        logger: Optional[Logger] = None,
+        log_every_n_steps: int = 1,
+        gradient_clip_val: Optional[float] = None,
+        distribution_strategy: Optional[str] = "ddp",
+        **trainer_kwargs: Any,
+    ) -> None:
+        """Fit `Model` using `pytorch_lightning.Trainer`."""
+        self.train(mode=True)
+        for vertex_index in range(1, self.n_verts + 1):
+            self.current_vol_reg = self.reg_pars[vertex_index]
+            self.simplex_model.add_vert()
+            
+            self.train(mode=True)
+            self._construct_trainers(
+                max_epochs=max_epochs,
+                gpus=gpus,
+                callbacks=callbacks,
+                ckpt_path=ckpt_path,
+                logger=logger,
+                log_every_n_steps=log_every_n_steps,
+                gradient_clip_val=gradient_clip_val,
+                **trainer_kwargs,
+            )
+
+            try:
+                self._trainer.fit(
+                    self, train_dataloader, val_dataloader, ckpt_path=ckpt_path
+                )
+            except KeyboardInterrupt:
+                self.warning("[ctrl+c] Exiting gracefully.")
+                pass
+
+@patch('icecube_utils.StandardModel.forward', StandardModelGraphnet_forward)
+@patch('icecube_utils.DynEdge.forward', DynEdgeGraphnet_forward)
+@patch('graphnet.models.gnn.dynedge.DynEdgeConv.forward', DynEdgeConvGraphnet_forward)
+@patch('graphnet.models.components.layers.EdgeConv.forward', EdgeConvGraphnet_forward)
+@patch('graphnet.models.components.layers.EdgeConv.message', EdgeConvGraphnet_message)
+@patch('torch.nn.Sequential.forward', SequentialGraphnet_forward)
+@patch('graphnet.models.task.reconstruction.Task.forward', Task_forward)
+def train_dynedge_simplex(
+    config,
+    state_dict_path
+):
+    base_model = load_pretrained_model(
+        config, 
+        str(state_dict_path)
+    )
+    train_dataloader, validate_dataloader = make_dataloaders(config=config)
+    
+    def build_model_simplex(n_output, fix_points, **architecture_kwargs):
+        model = build_model(config, train_dataloader, fix_points)
+        return model
+
+    simplex_model_wrapper = SimplexNetGraphnet(
+        architecture=build_model_simplex, 
+        n_verts=config['simplex']['n_verts'], 
+        LMBD=config['simplex']['LMBD'], 
+        base_model=base_model, 
+        nsample=config['simplex']['nsample']
+    )
+    simplex_model_wrapper = train_dynedge(
+        simplex_model_wrapper,
+        config,
+        train_dataloader, 
+        validate_dataloader
+    )
+    return simplex_model_wrapper

@@ -20,6 +20,7 @@ from icecube_utils import (
     train_dynedge_from_scratch,
     FlipTimeTransform,
     FlipCoordinateTransform,
+    train_dynedge_simplex,
 )
 
 
@@ -51,6 +52,7 @@ def parse_args():
     parser.add_argument('--enable-augmentations', action='store_true')
     parser.add_argument('--lr-onecycle-factors', type=float, nargs=3, default=[1e-02, 1, 1e-02])
     parser.add_argument('--lr-schedule-type', type=str, default='linear', choices=['linear', 'exp'])
+    parser.add_argument('--train-mode', type=str, default='default', choices=['default', 'blocks', 'simplex'])
     args = parser.parse_args()
     return args
 
@@ -134,6 +136,11 @@ config = {
         'block_output_aggregation': 'sum',
         'train_transforms': [],
         'val_transforms': [],
+        'simplex': {
+            'n_verts': 3,
+            'LMBD': 1e-10,
+            'nsample': 5,
+        }
 }
 
 
@@ -251,12 +258,19 @@ if __name__ == '__main__':
     ):
         config['fit']['ckpt_path'] = args.state_dict_path
     
-    if args.n_blocks is not None:
+    if args.train_mode == 'blocks':
+        assert args.n_blocks is not None
         config['fit']['distribution_strategy'] = 'auto'
         model = train_dynedge_blocks(
             config, 
             args.n_blocks, 
             args.model_save_dir,
+            args.state_dict_path
+        )
+    elif args.train_mode == 'simplex':
+        assert args.state_dict_path is not None
+        model = train_dynedge_simplex(
+            config, 
             args.state_dict_path
         )
     else:
