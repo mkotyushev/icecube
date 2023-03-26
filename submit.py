@@ -16,6 +16,7 @@ def parse_args():
     parser.add_argument('--save-path', type=str, default='/kaggle/working/submission.csv')
     parser.add_argument('--batch-size', type=int, default=128)
     parser.add_argument('--num-workers', type=int, default=3)
+    parser.add_argument('--max-n-pulses', type=int, default=None)
     return parser.parse_args()
 
 
@@ -48,7 +49,11 @@ def main(args):
     config['inference_database_path'] = args.test_db_path
     config['bias'] = True
     config['fit']['distribution_strategy'] = 'ddp'
+
     config['max_n_pulses']['max_n_pulses'] = None
+    if args.max_n_pulses is not None:
+        config['max_n_pulses']['max_n_pulses'] = args.max_n_pulses
+        config['max_n_pulses']['max_n_pulses_strategy'] = 'clamp'    
 
     model = load_pretrained_model(
         config=config, 
