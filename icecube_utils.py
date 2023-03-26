@@ -1358,6 +1358,16 @@ class SimplexNetGraphnet(Model):
 
     def _get_batch_size(self, data: Data) -> int:
         return torch.numel(torch.unique(data.batch))
+    
+    def load_state_dict(self, path_or_state_dict: Union[str, Dict], strict: bool = True) -> "Model":
+        """Load model state dict from `path`."""
+        if isinstance(path_or_state_dict, str):
+            state_dict = torch.load(path_or_state_dict)
+        else:
+            state_dict = path_or_state_dict
+        state_dict = {k.replace('simplex_model.', ''): v for k, v in state_dict.items()}
+        self.simplex_model.load_state_dict(state_dict, strict=strict)
+        return self
 
     def shared_step(self, batch: Data, batch_idx: int) -> Tensor:
         """Perform shared step.
@@ -1407,6 +1417,10 @@ class SimplexNetGraphnet(Model):
 
     def forward(self, data: Data) -> List[Union[Tensor, Data]]:
         return self.simplex_model(data)
+    
+    def add_vert(self, vertex_index: int):
+        self.simplex_model.add_vert()
+        self.current_vol_reg = self.reg_pars[vertex_index]
 
     def fit(
         self,
@@ -1426,9 +1440,7 @@ class SimplexNetGraphnet(Model):
         """Fit `Model` using `pytorch_lightning.Trainer`."""
         self.train(mode=True)
         for vertex_index in range(1, self.n_verts + 1):
-            self.current_vol_reg = self.reg_pars[vertex_index]
-            self.simplex_model.add_vert()
-            
+            self.add_vert(vertex_index)
             super().fit(
                 train_dataloader=train_dataloader,
                 val_dataloader=val_dataloader,
@@ -1443,6 +1455,7 @@ class SimplexNetGraphnet(Model):
                 **trainer_kwargs
             )
 
+
 @patch('icecube_utils.StandardModel.forward', StandardModelGraphnet_forward)
 @patch('icecube_utils.DynEdge.forward', DynEdgeGraphnet_forward)
 @patch('graphnet.models.gnn.dynedge.DynEdgeConv.forward', DynEdgeConvGraphnet_forward)
@@ -1450,9 +1463,10 @@ class SimplexNetGraphnet(Model):
 @patch('graphnet.models.components.layers.EdgeConv.message', EdgeConvGraphnet_message)
 @patch('torch.nn.Sequential.forward', SequentialGraphnet_forward)
 @patch('graphnet.models.task.reconstruction.Task.forward', Task_forward)
-def train_dynedge_simplex(
-    config,
-    state_dict_path
+def build_model_simplex(
+    config, 
+    state_dict_path,
+    add_vertices=False
 ):
     base_model = load_pretrained_model(
         config, 
@@ -1460,7 +1474,7 @@ def train_dynedge_simplex(
     )
     train_dataloader, validate_dataloader = make_dataloaders(config=config)
     
-    def build_model_simplex(n_output, fix_points, **architecture_kwargs):
+    def build_model_wrapper(n_output, fix_points, **architecture_kwargs):
         model = build_model(config, train_dataloader, fix_points)
         return model
 
@@ -1481,7 +1495,7 @@ def train_dynedge_simplex(
     }
 
     simplex_model_wrapper = SimplexNetGraphnet(
-        architecture=build_model_simplex, 
+        architecture=build_model_wrapper, 
         n_verts=config['simplex']['n_verts'], 
         LMBD=config['simplex']['LMBD'], 
         base_model=base_model, 
@@ -1494,6 +1508,31 @@ def train_dynedge_simplex(
             "interval": "step",
         },
     )
+
+    # If building for inference, add vertices
+    if add_vertices:
+        for vertex_index in range(1, simplex_model_wrapper.n_verts + 1):
+            simplex_model_wrapper.add_vert(vertex_index)
+
+    return simplex_model_wrapper, train_dataloader, validate_dataloader
+
+
+@patch('icecube_utils.StandardModel.forward', StandardModelGraphnet_forward)
+@patch('icecube_utils.DynEdge.forward', DynEdgeGraphnet_forward)
+@patch('graphnet.models.gnn.dynedge.DynEdgeConv.forward', DynEdgeConvGraphnet_forward)
+@patch('graphnet.models.components.layers.EdgeConv.forward', EdgeConvGraphnet_forward)
+@patch('graphnet.models.components.layers.EdgeConv.message', EdgeConvGraphnet_message)
+@patch('torch.nn.Sequential.forward', SequentialGraphnet_forward)
+@patch('graphnet.models.task.reconstruction.Task.forward', Task_forward)
+def train_dynedge_simplex(
+    config,
+    state_dict_path
+):
+    simplex_model_wrapper, train_dataloader, validate_dataloader = \
+        build_model_simplex(
+            config, 
+            state_dict_path
+        )
     simplex_model_wrapper = train_dynedge(
         simplex_model_wrapper,
         config,
@@ -1501,3 +1540,14 @@ def train_dynedge_simplex(
         validate_dataloader
     )
     return simplex_model_wrapper
+
+
+@patch('icecube_utils.StandardModel.forward', StandardModelGraphnet_forward)
+@patch('icecube_utils.DynEdge.forward', DynEdgeGraphnet_forward)
+@patch('graphnet.models.gnn.dynedge.DynEdgeConv.forward', DynEdgeConvGraphnet_forward)
+@patch('graphnet.models.components.layers.EdgeConv.forward', EdgeConvGraphnet_forward)
+@patch('graphnet.models.components.layers.EdgeConv.message', EdgeConvGraphnet_message)
+@patch('torch.nn.Sequential.forward', SequentialGraphnet_forward)
+@patch('graphnet.models.task.reconstruction.Task.forward', Task_forward)
+def inference_simplex(model, config: Dict[str, Any], use_labels: bool) -> pd.DataFrame:
+    return inference(model, config, use_labels)
