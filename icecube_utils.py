@@ -1,14 +1,18 @@
 
 import gc
 from pathlib import Path
-import math
 import numpy as np
 import pandas as pd
 import os
 import torch
-from copy import deepcopy
+import polars as pl
+import pandas as pd
+import gc, os
+import numpy as np
+from collections import OrderedDict
+from bisect import bisect_right
 from mock import patch
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Iterator, Optional, Sized
 from pytorch_lightning.callbacks import (
     EarlyStopping, 
     GradientAccumulationScheduler,
@@ -19,7 +23,6 @@ from torch.optim.adamw import AdamW
 from torch.optim.lr_scheduler import LRScheduler
 from torch.nn import Module, Linear, ModuleList
 from torch import Tensor
-from graphnet.data.constants import FEATURES, TRUTH
 from graphnet.models import StandardModel
 from graphnet.models.detector.icecube import IceCubeKaggle
 from graphnet.models.gnn import DynEdge
@@ -30,10 +33,154 @@ from graphnet.training.loss_functions import CosineLoss, CosineLoss3D, Euclidian
 from graphnet.training.labels import Direction
 from graphnet.training.utils import make_dataloader
 from graphnet.utilities.logging import get_logger
+from torch_geometric.data import Data, Dataset
 
 
 # Constants
 logger = get_logger()
+
+
+# https://www.kaggle.com/code/iafoss/chunk-based-data-loading-with-caching
+class IceCubeCache(Dataset):
+    def __init__(self, path=PATH, mode='test', meta=None, pulse_limit=128, cache_size=1):
+        val_fnames = ['batch_655.parquet','batch_656.parquet','batch_657.parquet',
+                      'batch_658.parquet','batch_659.parquet']
+        chunk_size=200000
+        self.mode, self.path_meta = mode,meta
+
+        if mode == 'train' or mode == 'eval':
+            assert meta is not None, 'Need to provide labels'
+            self.path = os.path.join(path,'train')
+            self.files = [p for p in sorted(os.listdir(self.path)) \
+                          if p!='batch_660.parquet'] #660 is shorter
+            if mode == 'train':
+                self.files = sorted(set(self.files) - set(val_fnames))
+            else: self.files = val_fnames
+            self.chunks = [chunk_size]*len(self.files)
+        elif mode == 'test':
+            self.path = os.path.join(path,'test')
+            self.files = [p for p in sorted(os.listdir(self.path))]
+            
+            #make sure that all files are considered regardless the number of events
+            self.chunks = []
+            for fname in self.files:
+                ids = pl.read_parquet(os.path.join(self.path,fname)\
+                        ).select(['event_id']).unique().to_numpy().reshape(-1)
+                self.chunks.append(len(ids))
+            gc.collect()
+        else: raise NotImplementedError 
+            
+        self.chunk_cumsum = np.cumsum(self.chunks)
+        self.cache, self.meta = None,None
+        self.pulse_limit,self.cache_size = pulse_limit,cache_size
+        self.geometry = pd.read_csv(os.path.join(path,'sensor_geometry.csv'))
+        self.geometry = (self.geometry[['x','y','z']].values/500.0).astype(np.float32)
+        
+    def __len__(self):
+        return self.chunk_cumsum[-1]
+    
+    def load_data(self, fname):
+        if self.cache is None: self.cache = OrderedDict()
+        if fname not in self.cache:
+            df = pl.read_parquet(os.path.join(self.path,fname))
+            df = df.groupby("event_id").agg([
+                pl.count(),
+                pl.col("sensor_id").list(),
+                pl.col("time").list(),
+                pl.col("charge").list(),
+                pl.col("auxiliary").list(),])
+            self.cache[fname] = df.sort('event_id')
+            if len(self.cache) > self.cache_size: del self.cache[list(self.cache.keys())[0]]
+                
+    def load_meta(self, fname):
+        if self.meta is None: self.meta = OrderedDict()
+        if fname not in self.meta:
+            fidx = fname.split('.')[0].split('_')[-1]
+            self.meta[fname] = pl.read_parquet(os.path.join(self.path_meta,
+                                f'train_meta_{fidx}.parquet')).sort('event_id')
+            if len(self.meta) > self.cache_size: del self.meta[list(self.meta.keys())[0]]
+        
+    def __getitem__(self, idx0):
+        fidx = bisect_right(self.chunk_cumsum, idx0)
+        fname = self.files[fidx]
+        idx = int(idx0 - self.chunk_cumsum[fidx] + self.chunk_cumsum[0])
+        
+        self.load_data(fname)
+        df = self.cache[fname][idx]
+        sensor_id =  df['sensor_id'][0].item().to_numpy()
+        time =  df['time'][0].item().to_numpy()
+        charge = df['charge'][0].item().to_numpy()
+        auxiliary = df['auxiliary'][0].item().to_numpy()
+        
+        pos = self.geometry[sensor_id]
+        time = (time - 1e4)/3e4
+        charge = np.log10(charge)/3.0
+        auxiliary = auxiliary - 0.5
+        
+        x = np.stack([pos[:,0], pos[:,1], pos[:,2], time, charge, auxiliary],
+                     -1).astype(np.float32)
+        x =  torch.from_numpy(x)
+        data = Data(x=x, n_pulses=torch.tensor(x.shape[0], dtype=torch.int32))
+        
+        # Downsample large events
+        if data.n_pulses > self.pulse_limit:
+            data.x = data.x[torch.randperm(len(data.x)).numpy()[:self.pulse_limit]]
+            data.n_pulses = torch.tensor(self.pulse_limit, dtype=torch.int32)
+        
+        if self.mode != 'test': 
+            self.load_meta(fname)
+            meta = self.meta[fname][idx]
+            azimuth = meta['azimuth'].item()
+            zenith = meta['zenith'].item()
+            target = np.array([azimuth,zenith]).astype(np.float32)
+            target = torch.from_numpy(target)
+        else: target = df['event_id'].item()
+            
+        return data, target
+
+
+class RandomChunkSampler(torch.utils.data.Sampler[int]):
+    data_source: Sized
+    replacement: bool
+
+    def __init__(self, data_source: Sized, chunks, num_samples: Optional[int] = None,
+                 generator=None, **kwargs) -> None:
+        # chunks - a list of chunk sizes
+        self.data_source = data_source
+        self._num_samples = num_samples
+        self.generator = generator
+        self.chunks = chunks
+
+        if not isinstance(self.num_samples, int) or self.num_samples <= 0:
+            raise ValueError("num_samples should be a positive integer "
+                             "value, but got num_samples={}".format(self.num_samples))
+
+    @property
+    def num_samples(self) -> int:
+        # dataset size might change at runtime
+        if self._num_samples is None:
+            return len(self.data_source)
+        return self._num_samples
+
+    def __iter__(self) -> Iterator[int]:
+        n = len(self.data_source)
+        cumsum = np.cumsum(self.chunks)
+        if self.generator is None:
+            seed = int(torch.empty((), dtype=torch.int64).random_().item())
+            generator = torch.Generator()
+            generator.manual_seed(seed)
+        else:
+            generator = self.generator
+
+        chunk_list = torch.randperm(len(self.chunks), generator=generator).tolist()
+        # sample indexes chunk by chunk
+        for i in chunk_list:
+            chunk_len = self.chunks[i]
+            offset = cumsum[i] - cumsum[0]
+            yield from (offset + torch.randperm(chunk_len, generator=generator)).tolist()
+
+    def __len__(self) -> int:
+        return self.num_samples
 
 
 class ExpLRSchedulerPiece:
