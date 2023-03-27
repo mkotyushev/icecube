@@ -76,8 +76,8 @@ truth = ['zenith', 'azimuth']
 
 config = {
         # 'dataset_type': 'sqlite',
-        'dataset_type': 'cached',
-        'cached': {
+        'dataset_type': 'sequential_parquet',
+        'sequential_parquet': {
             'train_path': Path('/workspace/icecube/data/train'),
             'val_path': Path('/workspace/icecube/data/val'),
             'meta_path': Path('/workspace/icecube/data/train_meta'),
