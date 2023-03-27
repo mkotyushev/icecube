@@ -82,23 +82,34 @@ class SequentialIcecubeDataset(Dataset):
         self.label_fns = dict()
 
         # Internal sequence state
-        self.current_outer_index = None
-        self.current_inner_index = None
+        self.current_outer_index = 0
+        self.current_inner_index = 0
         self.current_inner_index_permutation = None
-        self.current_tables = {
-            'data': None,
-            'meta': None,
-            'geometry': build_geometry_table(geometry_path),
-        }
         self.filepath_to_len = {
             filepath: 
             len(pl.read_parquet(self._filepath_to_meta_filepath(filepath))) 
             for filepath in self.filepathes
         }
+
+        if self.shuffle_outer:
+            np.random.shuffle(self.filepathes)
+        
+        filepath = self.filepathes[self.current_outer_index]      
+        meta_filepath = self._filepath_to_meta_filepath(filepath)          
+        
+        self.current_inner_index_permutation = list(range(self.filepath_to_len[filepath]))
+        if self.shuffle_inner:
+            np.random.shuffle(self.current_inner_index_permutation)
+
+        geometry = build_geometry_table(geometry_path)
+        self.current_tables = {
+            'data': self._load_data(filepath, geometry),
+            'meta': self._load_meta(meta_filepath) if meta_filepath is not None else None,
+            'geometry': geometry,
+        }
+
         self.length = sum(self.filepath_to_len.values())
         self.lock = torch.multiprocessing.Lock()
-
-        self._advance(0)
 
         super().__init__(
             '', 
@@ -132,9 +143,9 @@ class SequentialIcecubeDataset(Dataset):
     #     df = pl.read_parquet(filepath).sort('event_id')
     #     return df
 
-    def _load_data(self, filepath):
+    def _load_data(self, filepath, geometry):
         df = pl.read_parquet(filepath)
-        df = df.join(self.current_tables['geometry'], on='sensor_id', how="inner")
+        df = df.join(geometry, on='sensor_id', how="inner")
         df = df.groupby("event_id").agg([
             pl.count(),
             pl.col("sensor_id").list(),
@@ -152,45 +163,31 @@ class SequentialIcecubeDataset(Dataset):
 
     def _advance(self, idx):
         with self.lock:
-            index = 0
-            if self.current_tables['data'] is not None:
-                index = self.current_inner_index_permutation[self.current_inner_index]
-            need_load = False
-            if (
-                self.current_tables['data'] is None or 
-                self.current_inner_index >= len(self.current_tables['data'])
-            ):
-                if self.current_tables['data'] is None:
-                    self.current_outer_index = 0
-                    if self.shuffle_outer:
-                        np.random.shuffle(self.filepathes)
-                elif self.current_inner_index >= len(self.current_tables['data']):
-                    self.current_outer_index += 1
-
-                filepath = self.filepathes[self.current_outer_index]      
-                meta_filepath = self._filepath_to_meta_filepath(filepath)          
-            
-                self.current_inner_index = 0
-
-                self.current_inner_index_permutation = list(range(self.filepath_to_len[filepath]))
-                if self.shuffle_inner:
-                    np.random.shuffle(self.current_inner_index_permutation)
-                
-                index = self.current_inner_index_permutation[self.current_inner_index]
+            if self.current_inner_index < len(self.current_tables['data']):
                 self.current_inner_index += 1
-                
-                need_load = True
+            else:
+                self.current_inner_index = 0
+                self.current_outer_index += 1
 
-        if need_load:
-            data = self._load_data(filepath)
-            if meta_filepath is not None:
-                meta = self._load_meta(meta_filepath)
+            if self.current_outer_index >= len(self.filepathes):
+                self.current_outer_index = 0
+
+            # Shuffle
+            if self.current_outer_index == 0 and self.shuffle_outer:
+                np.random.shuffle(self.filepathes)
             
-            with self.lock:
-                self.current_tables['data'] = data
-                self.current_tables['meta'] = meta
+            filepath = self.filepathes[self.current_outer_index]      
+            meta_filepath = self._filepath_to_meta_filepath(filepath)          
+            
+            self.current_inner_index_permutation = list(range(self.filepath_to_len[filepath]))
+            if self.current_inner_index == 0 and self.shuffle_inner:
+                np.random.shuffle(self.current_inner_index_permutation)
 
-        return index
+            # Load data if needed
+            if self.current_inner_index == 0:
+                self.current_tables['data'] = self._load_data(filepath, self.current_tables['geometry'])
+                if meta_filepath is not None:
+                    self.current_tables['meta'] = self._load_meta(meta_filepath)
 
     # Override abstract method(s)
     def _init(self) -> None:
