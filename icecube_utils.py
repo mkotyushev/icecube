@@ -419,6 +419,8 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
         dataset_kwargs = dict(
             geometry_path=config['sequential_parquet']['geometry_path'],
             meta_path=config['sequential_parquet']['meta_path'],
+            shuffle_outer=config['sequential_parquet']['shuffle_outer'],
+            shuffle_inner=config['sequential_parquet']['shuffle_inner'],
         )
     else:
         raise ValueError(f'Unknown dataset type {config["dataset_type"]}')
@@ -447,6 +449,8 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
     
     if config['dataset_type'] == 'sequential_parquet':
         dataset_kwargs['filepathes'] = config['sequential_parquet']['val_path'].glob('**/*.parquet')
+        dataset_kwargs.pop('shuffle_outer', None)
+        dataset_kwargs.pop('shuffle_inner', None)
     validate_dataloader = make_dataloader(
         dataset_class = dataset_class,
         db = config['inference_database_path'],
