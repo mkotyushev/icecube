@@ -41,6 +41,7 @@ from pytorch_lightning import Callback
 from pytorch_lightning.loggers.logger import Logger
 from simplex.models.simplex_models import SimplexNet, Linear as SimplexLinear
 from graphnet.models.model import Model
+from pytorch_lightning.utilities import grad_norm
 
 
 # Constants
@@ -1369,21 +1370,36 @@ class SimplexNetGraphnet(Model):
         self.simplex_model.load_state_dict(state_dict, strict=strict)
         return self
 
+    def inference(self) -> None:
+        """Activate inference mode."""
+        self.simplex_model.eval()
+        self.simplex_model.net.inference()
+
+    def train(self, mode: bool = True) -> "Model":
+        """Deactivate inference mode."""
+        super().train(mode)
+        self.simplex_model = self.simplex_model.train(mode)
+        self.simplex_model.net.train(mode)
+        return self
+
     def shared_step(self, batch: Data, batch_idx: int) -> Tensor:
         """Perform shared step.
 
         Applies the forward pass and the following loss calculation, shared
         between the training and validation step.
         """
-        loss = 0
+        loss = None
         for _ in range(self.nsample):
             output = self.simplex_model(batch)
-            loss = loss + self.simplex_model.net.compute_loss(output, batch)
+            if loss is None:
+                loss = self.simplex_model.net.compute_loss(output, batch)
+            else:
+                loss = loss + self.simplex_model.net.compute_loss(output, batch)
         loss.div(self.nsample)
 
-        vol = self.simplex_model.total_volume()
+        vol = self.simplex_model.total_volume().cuda()
         log_vol = (vol + 1e-4).log()
-        
+
         loss = loss - self.current_vol_reg * log_vol
         return loss
 
@@ -1419,8 +1435,8 @@ class SimplexNetGraphnet(Model):
         return self.simplex_model(data)
     
     def add_vert(self, vertex_index: int):
-        self.simplex_model.add_vert()
         self.current_vol_reg = self.reg_pars[vertex_index]
+        self.simplex_model.add_vert(randomize_second_vertex=True)
 
     def fit(
         self,
@@ -1441,6 +1457,7 @@ class SimplexNetGraphnet(Model):
         self.train(mode=True)
         for vertex_index in range(1, self.n_verts + 1):
             self.add_vert(vertex_index)
+            self.simplex_model = self.simplex_model.cuda()
             super().fit(
                 train_dataloader=train_dataloader,
                 val_dataloader=val_dataloader,
@@ -1454,6 +1471,9 @@ class SimplexNetGraphnet(Model):
                 distribution_strategy='auto',
                 **trainer_kwargs
             )
+
+    # def on_before_optimizer_step(self, optimizer):
+    #     print(grad_norm(self, norm_type=2))
 
 
 @patch('icecube_utils.StandardModel.forward', StandardModelGraphnet_forward)
