@@ -8,7 +8,7 @@ from pathlib import Path
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.profilers import AdvancedProfiler
 from pytorch_lightning.strategies.ddp import DDPStrategy
-from graphnet.data.sqlite.sqlite_dataset import SQLiteDataset, SQLiteDatasetMaxNPulses
+from graphnet.data.sqlite.sqlite_dataset import SQLiteDataset
 
 from icecube_utils import (
     CancelAzimuthByPredictionTransform,
@@ -75,6 +75,12 @@ features = FEATURES.KAGGLE
 truth = ['zenith', 'azimuth']
 
 config = {
+        'dataset_type': 'sqlite',
+        'cached': {
+            'data_dir_path': '/workspace/data',
+            'meta_path': '/workspace/data/train_meta',
+            'cache_size': 5,
+        },
         # "path": '/workspace/data2/batch_14.db',
         # "inference_database_path": '/workspace/data2/batch_656.db',
         "path": '/workspace/icecube/data/fold_0.db',
@@ -128,8 +134,6 @@ config = {
             'loss_weight_columns': ['first_pulse_index', 'last_pulse_index'],
             'loss_weight_transform': first_last_pulse_index_to_loss_weight,
         },
-        'dataset_class': SQLiteDataset,
-        # 'dataset_class': SQLiteDatasetMaxNPulses,
         'zero_new_block': False,
         'block_output_aggregation': 'sum',
         'train_transforms': [],

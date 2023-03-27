@@ -42,14 +42,30 @@ logger = get_logger()
 
 # https://www.kaggle.com/code/iafoss/chunk-based-data-loading-with-caching
 class IceCubeCache(Dataset):
-    def __init__(self, path=PATH, mode='test', meta=None, pulse_limit=128, cache_size=1):
-        val_fnames = ['batch_655.parquet','batch_656.parquet','batch_657.parquet',
-                      'batch_658.parquet','batch_659.parquet']
-        chunk_size=200000
-        self.mode, self.path_meta = mode,meta
+    def __init__(
+        self, 
+        path, 
+        mode='test', 
+        meta_path=None, 
+        cache_size=1,
+        max_n_pulses=200, 
+        max_n_pulses_strategy='clamp', 
+    ):
+        val_fnames = ['batch_656.parquet']
+        chunk_size = 200000
+        self.mode, self.meta_path = mode, meta_path
+
+        self.max_n_pulses = max_n_pulses
+        if max_n_pulses is not None:
+            if max_n_pulses_strategy is None:
+                max_n_pulses_strategy = "clamp"
+        assert max_n_pulses_strategy in ["clamp", "random_sequential", "random"]
+        if mode in ["test", "eval"]:  # TODO or just fix seed
+            assert max_n_pulses_strategy == "clamp"
+        self.max_n_pulses_strategy = max_n_pulses_strategy
 
         if mode == 'train' or mode == 'eval':
-            assert meta is not None, 'Need to provide labels'
+            assert meta_path is not None, 'Need to provide labels'
             self.path = os.path.join(path,'train')
             self.files = [p for p in sorted(os.listdir(self.path)) \
                           if p!='batch_660.parquet'] #660 is shorter
@@ -71,8 +87,8 @@ class IceCubeCache(Dataset):
         else: raise NotImplementedError 
             
         self.chunk_cumsum = np.cumsum(self.chunks)
-        self.cache, self.meta = None,None
-        self.pulse_limit,self.cache_size = pulse_limit,cache_size
+        self.cache, self.meta = None, None
+        self.cache_size = cache_size
         self.geometry = pd.read_csv(os.path.join(path,'sensor_geometry.csv'))
         self.geometry = (self.geometry[['x','y','z']].values/500.0).astype(np.float32)
         
@@ -96,7 +112,7 @@ class IceCubeCache(Dataset):
         if self.meta is None: self.meta = OrderedDict()
         if fname not in self.meta:
             fidx = fname.split('.')[0].split('_')[-1]
-            self.meta[fname] = pl.read_parquet(os.path.join(self.path_meta,
+            self.meta[fname] = pl.read_parquet(os.path.join(self.meta_path,
                                 f'train_meta_{fidx}.parquet')).sort('event_id')
             if len(self.meta) > self.cache_size: del self.meta[list(self.meta.keys())[0]]
         
@@ -122,10 +138,16 @@ class IceCubeCache(Dataset):
         x =  torch.from_numpy(x)
         data = Data(x=x, n_pulses=torch.tensor(x.shape[0], dtype=torch.int32))
         
-        # Downsample large events
-        if data.n_pulses > self.pulse_limit:
-            data.x = data.x[torch.randperm(len(data.x)).numpy()[:self.pulse_limit]]
-            data.n_pulses = torch.tensor(self.pulse_limit, dtype=torch.int32)
+        # Apply max_n_pulses strategy
+        if self.max_n_pulses is not None and len(data) > self.max_n_pulses:
+            if self.max_n_pulses_strategy == 'clamp':
+                data = data[:self.max_n_pulses]
+            elif self.max_n_pulses_strategy == 'random':
+                indices, _ = torch.sort(torch.randperm(len(data))[:self.max_n_pulses])
+                data = data[indices]
+            elif self.max_n_pulses_strategy == 'each_nth':
+                data = data[::len(data) // self.max_n_pulses]
+                data = data[:self.max_n_pulses]
         
         if self.mode != 'test': 
             self.load_meta(fname)
@@ -555,8 +577,31 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
     if 'loss_weight' in config:
         loss_weight_kwargs = config['loss_weight']
 
+    train_dataset, val_dataset = None, None
+    if config['dataset_type'] == 'sqlite':
+        # TODO handle sqlite here for consistency
+        # Will be constructed by default in make_dataloader
+        pass
+    elif config['dataset_type'] == 'cached':
+        train_dataset = IceCubeCache(
+            path=config['cached']['data_dir_path'],
+            mode='train',
+            meta_path=config['cached']['meta_path'],
+            cache_size=config['cached']['cache_size'],
+            max_n_pulses=config['max_n_pulses']['max_n_pulses'],
+            max_n_pulses_strategy=config['max_n_pulses']['max_n_pulses_strategy'],
+        )
+        val_dataset = IceCubeCache(
+            path=config['cached']['data_dir_path'],
+            mode='eval',
+            meta_path=config['cached']['meta_path'],
+            cache_size=config['cached']['cache_size'],
+            max_n_pulses=config['max_n_pulses']['max_n_pulses'],
+            max_n_pulses_strategy=config['max_n_pulses']['max_n_pulses_strategy'],
+        )
+
     train_dataloader = make_dataloader(
-        dataset_class = config['dataset_class'],
+        dataset = train_dataset,
         db = config['path'],
         selection = None,
         pulsemaps = config['pulsemap'],
@@ -574,7 +619,7 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
     )
     
     validate_dataloader = make_dataloader(
-        dataset_class = config['dataset_class'],
+        dataset = val_dataset,
         db = config['inference_database_path'],
         selection = None,
         pulsemaps = config['pulsemap'],
