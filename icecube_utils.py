@@ -30,7 +30,7 @@ from graphnet.training.labels import Direction
 from graphnet.training.utils import make_dataloader
 from graphnet.utilities.logging import get_logger
 from graphnet.data.sqlite import SQLiteDataset
-from graphnet.data.parquet import ParquetDataset, SequentialParquetDataset
+from graphnet.data.parquet import ParquetDataset, ParallelParquetTrainDataset
 
 
 # Constants
@@ -414,20 +414,17 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
         dataset_class = SQLiteDataset
     elif config['dataset_type'] == 'parquet':
         dataset_class = ParquetDataset
-    elif config['dataset_type'] == 'sequential_parquet':
-        dataset_class = SequentialParquetDataset
+    elif config['dataset_type'] == 'parallel_parquet':
+        dataset_class = ParallelParquetTrainDataset
         dataset_kwargs = dict(
-            geometry_path=config['sequential_parquet']['geometry_path'],
-            meta_path=config['sequential_parquet']['meta_path'],
-            shuffle_outer=config['sequential_parquet']['shuffle_outer'],
-            shuffle_inner=config['sequential_parquet']['shuffle_inner'],
+            geometry_path=config['parallel_parquet']['geometry_path'],
+            meta_path=config['parallel_parquet']['meta_path'],
         )
     else:
         raise ValueError(f'Unknown dataset type {config["dataset_type"]}')
 
-
-    if config['dataset_type'] == 'sequential_parquet':
-        dataset_kwargs['filepathes'] = config['sequential_parquet']['train_path'].glob('**/*.parquet')
+    if config['dataset_type'] == 'parallel_parquet':
+        dataset_kwargs['filepathes'] = config['parallel_parquet']['train_path'].glob('**/*.parquet')
     train_dataloader = make_dataloader(
         dataset_class = dataset_class,
         db = config['path'],
@@ -447,12 +444,8 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
         **dataset_kwargs
     )
     
-    if config['dataset_type'] == 'sequential_parquet':
-        dataset_kwargs['filepathes'] = config['sequential_parquet']['val_path'].glob('**/*.parquet')
-        dataset_kwargs.pop('shuffle_outer', None)
-        dataset_kwargs.pop('shuffle_inner', None)
     validate_dataloader = make_dataloader(
-        dataset_class = dataset_class,
+        dataset_class = SQLiteDataset,
         db = config['inference_database_path'],
         selection = None,
         pulsemaps = config['pulsemap'],
@@ -467,7 +460,6 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
         max_n_pulses=config['max_n_pulses']['max_n_pulses'],
         max_n_pulses_strategy="clamp",
         transforms = config['val_transforms'],
-        **dataset_kwargs
     )
     return train_dataloader, validate_dataloader
 

@@ -77,14 +77,12 @@ truth = ['zenith', 'azimuth']
 config = {
         # 'dataset_type': 'sqlite',
         # 'dataset_type': 'parquet',
-        'dataset_type': 'sequential_parquet',
-        'sequential_parquet': {
+        'dataset_type': 'parallel_parquet',
+        'parallel_parquet': {
             'train_path': Path('/workspace/icecube/data/train'),
             'val_path': Path('/workspace/icecube/data/val'),
             'meta_path': Path('/workspace/icecube/data/train_meta'),
             'geometry_path': Path('/workspace/icecube/data/sensor_geometry.csv'),
-            'shuffle_outer': True,
-            'shuffle_inner': True,
         },
         # "path": '/workspace/data2/batch_14.db',
         # "inference_database_path": '/workspace/data2/batch_656.db',
