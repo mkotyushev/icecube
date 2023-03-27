@@ -75,11 +75,13 @@ features = FEATURES.KAGGLE
 truth = ['zenith', 'azimuth']
 
 config = {
-        'dataset_type': 'sqlite',
+        # 'dataset_type': 'sqlite',
+        'dataset_type': 'cached',
         'cached': {
-            'data_dir_path': '/workspace/data',
-            'meta_path': '/workspace/data/train_meta',
-            'cache_size': 5,
+            'train_path': Path('/workspace/icecube/data/train'),
+            'val_path': Path('/workspace/icecube/data/val'),
+            'meta_path': Path('/workspace/icecube/data/train_meta'),
+            'geometry_path': Path('/workspace/icecube/data/sensor_geometry.csv'),
         },
         # "path": '/workspace/data2/batch_14.db',
         # "inference_database_path": '/workspace/data2/batch_656.db',
@@ -94,7 +96,7 @@ config = {
         "run_name_tag": 'my_example',
         "batch_size": 100,
         "accumulate_grad_batches": 1,
-        "num_workers": 10,
+        "num_workers": 0,
         # "target": 'zenith',
         # "target": 'angles_sincos_euclidean',
         "target": 'direction',
@@ -190,6 +192,8 @@ if __name__ == '__main__':
             'loss_weight_columns': ['first_pulse_index', 'last_pulse_index'],
             'loss_weight_transform': first_last_pulse_index_to_loss_weight,
         }
+    else:
+        config['loss_weight'] = {}
 
     if args.enable_augmentations:
         if config['target'] in ['zenith_sincos_euclidean_cancel_azimuth', 'zenith']:

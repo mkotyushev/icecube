@@ -2,7 +2,6 @@
 import gc
 from pathlib import Path
 import numpy as np
-import pandas as pd
 import os
 import torch
 import polars as pl
@@ -12,7 +11,7 @@ import numpy as np
 from collections import OrderedDict
 from bisect import bisect_right
 from mock import patch
-from typing import Any, Dict, List, Iterator, Optional, Sized
+from typing import Any, Callable, Dict, List, Iterator, Optional, Sized, Tuple, Union
 from pytorch_lightning.callbacks import (
     EarlyStopping, 
     GradientAccumulationScheduler,
@@ -23,6 +22,7 @@ from torch.optim.adamw import AdamW
 from torch.optim.lr_scheduler import LRScheduler
 from torch.nn import Module, Linear, ModuleList
 from torch import Tensor
+from graphnet.data.dataset import ColumnMissingException, Dataset
 from graphnet.models import StandardModel
 from graphnet.models.detector.icecube import IceCubeKaggle
 from graphnet.models.gnn import DynEdge
@@ -33,176 +33,243 @@ from graphnet.training.loss_functions import CosineLoss, CosineLoss3D, Euclidian
 from graphnet.training.labels import Direction
 from graphnet.training.utils import make_dataloader
 from graphnet.utilities.logging import get_logger
-from torch_geometric.data import Data, Dataset
+from torch_geometric.data import Data
 
 
 # Constants
 logger = get_logger()
 
 
+def build_geometry_table(geometry_path):
+    geometry = pl.read_csv(geometry_path)
+
+    geometry = geometry.with_columns([
+        (pl.col('x') / 500).alias('x'),
+        (pl.col('y') / 500).alias('y'),
+        (pl.col('z') / 500).alias('z'),
+        pl.col('sensor_id').cast(pl.Int16).alias('sensor_id'), 
+    ])
+        
+    return geometry
+
+
 # https://www.kaggle.com/code/iafoss/chunk-based-data-loading-with-caching
-class IceCubeCache(Dataset):
+class SequentialIcecubeDataset(Dataset):
     def __init__(
         self, 
-        path, 
-        mode='test', 
+        filepathes, 
+        geometry_path,
+        features_columns,
+        truth_columns,
+        index_column,
+        *,
+        node_truth_columns=None,
         meta_path=None, 
-        cache_size=1,
-        max_n_pulses=200, 
-        max_n_pulses_strategy='clamp', 
+        loss_weight_columns=None,
+        loss_weight_default_value=None,
+        loss_weight_transform=None,
+        seed=None,
+        max_n_pulses=None, 
+        max_n_pulses_strategy=None, 
+        transforms=None,
+        shuffle_outer=False,
+        shuffle_inner=False,
     ):
-        val_fnames = ['batch_656.parquet']
-        chunk_size = 200000
-        self.mode, self.meta_path = mode, meta_path
+        self.filepathes = list(filepathes)
+        self.meta_path = meta_path
+        self.shuffle_outer = shuffle_outer
+        self.shuffle_inner = shuffle_inner
+        self.label_fns = dict()
 
-        self.max_n_pulses = max_n_pulses
-        if max_n_pulses is not None:
-            if max_n_pulses_strategy is None:
-                max_n_pulses_strategy = "clamp"
-        assert max_n_pulses_strategy in ["clamp", "random_sequential", "random"]
-        if mode in ["test", "eval"]:  # TODO or just fix seed
-            assert max_n_pulses_strategy == "clamp"
-        self.max_n_pulses_strategy = max_n_pulses_strategy
+        # Internal sequence state
+        self.current_outer_index = None
+        self.current_inner_index = None
+        self.current_inner_index_permutation = None
+        self.current_tables = {
+            'data': None,
+            'meta': None,
+            'geometry': build_geometry_table(geometry_path),
+        }
+        self.filepath_to_len = {
+            filepath: 
+            len(pl.read_parquet(self._filepath_to_meta_filepath(filepath))) 
+            for filepath in self.filepathes
+        }
+        self.length = sum(self.filepath_to_len.values())
+        self.lock = torch.multiprocessing.Lock()
 
-        if mode == 'train' or mode == 'eval':
-            assert meta_path is not None, 'Need to provide labels'
-            self.path = os.path.join(path,'train')
-            self.files = [p for p in sorted(os.listdir(self.path)) \
-                          if p!='batch_660.parquet'] #660 is shorter
-            if mode == 'train':
-                self.files = sorted(set(self.files) - set(val_fnames))
-            else: self.files = val_fnames
-            self.chunks = [chunk_size]*len(self.files)
-        elif mode == 'test':
-            self.path = os.path.join(path,'test')
-            self.files = [p for p in sorted(os.listdir(self.path))]
-            
-            #make sure that all files are considered regardless the number of events
-            self.chunks = []
-            for fname in self.files:
-                ids = pl.read_parquet(os.path.join(self.path,fname)\
-                        ).select(['event_id']).unique().to_numpy().reshape(-1)
-                self.chunks.append(len(ids))
-            gc.collect()
-        else: raise NotImplementedError 
-            
-        self.chunk_cumsum = np.cumsum(self.chunks)
-        self.cache, self.meta = None, None
-        self.cache_size = cache_size
-        self.geometry = pd.read_csv(os.path.join(path,'sensor_geometry.csv'))
-        self.geometry = (self.geometry[['x','y','z']].values/500.0).astype(np.float32)
+        self._advance(0)
+
+        super().__init__(
+            '', 
+            'data', 
+            features_columns, 
+            truth_columns, 
+            node_truth = node_truth_columns,
+            index_column = index_column,
+            truth_table = 'meta',
+            node_truth_table = 'meta',
+            string_selection = None,
+            selection = None,
+            dtype = torch.float32,
+            loss_weight_table = 'meta' if loss_weight_columns is not None else None,
+            loss_weight_columns = loss_weight_columns,
+            loss_weight_default_value = loss_weight_default_value,
+            loss_weight_transform = loss_weight_transform,
+            seed = seed,
+            max_n_pulses = max_n_pulses,
+            max_n_pulses_strategy = max_n_pulses_strategy,
+            transforms = transforms,
+        )
+
+    def _filepath_to_meta_filepath(self, filepath):
+        if self.meta_path is None:
+            return None
+        batch_id = filepath.stem.split('_')[1]
+        return self.meta_path / f'train_meta_{batch_id}.parquet'
         
-    def __len__(self):
-        return self.chunk_cumsum[-1]
-    
-    def load_data(self, fname):
-        if self.cache is None: self.cache = OrderedDict()
-        if fname not in self.cache:
-            df = pl.read_parquet(os.path.join(self.path,fname))
-            df = df.groupby("event_id").agg([
-                pl.count(),
-                pl.col("sensor_id").list(),
-                pl.col("time").list(),
-                pl.col("charge").list(),
-                pl.col("auxiliary").list(),])
-            self.cache[fname] = df.sort('event_id')
-            if len(self.cache) > self.cache_size: del self.cache[list(self.cache.keys())[0]]
+    # def _load_data(self, filepath):
+    #     df = pl.read_parquet(filepath).sort('event_id')
+    #     return df
+
+    def _load_data(self, filepath):
+        df = pl.read_parquet(filepath)
+        df = df.join(self.current_tables['geometry'], on='sensor_id', how="inner")
+        df = df.groupby("event_id").agg([
+            pl.count(),
+            pl.col("sensor_id").list(),
+            pl.col("x").list(),
+            pl.col("y").list(),
+            pl.col("z").list(),
+            pl.col("time").list(),
+            pl.col("charge").list(),
+            pl.col("auxiliary").list(),]).sort('event_id')
+        return df
                 
-    def load_meta(self, fname):
-        if self.meta is None: self.meta = OrderedDict()
-        if fname not in self.meta:
-            fidx = fname.split('.')[0].split('_')[-1]
-            self.meta[fname] = pl.read_parquet(os.path.join(self.meta_path,
-                                f'train_meta_{fidx}.parquet')).sort('event_id')
-            if len(self.meta) > self.cache_size: del self.meta[list(self.meta.keys())[0]]
-        
-    def __getitem__(self, idx0):
-        fidx = bisect_right(self.chunk_cumsum, idx0)
-        fname = self.files[fidx]
-        idx = int(idx0 - self.chunk_cumsum[fidx] + self.chunk_cumsum[0])
-        
-        self.load_data(fname)
-        df = self.cache[fname][idx]
-        sensor_id =  df['sensor_id'][0].item().to_numpy()
-        time =  df['time'][0].item().to_numpy()
-        charge = df['charge'][0].item().to_numpy()
-        auxiliary = df['auxiliary'][0].item().to_numpy()
-        
-        pos = self.geometry[sensor_id]
-        time = (time - 1e4)/3e4
-        charge = np.log10(charge)/3.0
-        auxiliary = auxiliary - 0.5
-        
-        x = np.stack([pos[:,0], pos[:,1], pos[:,2], time, charge, auxiliary],
-                     -1).astype(np.float32)
-        x =  torch.from_numpy(x)
-        data = Data(x=x, n_pulses=torch.tensor(x.shape[0], dtype=torch.int32))
-        
-        # Apply max_n_pulses strategy
-        if self.max_n_pulses is not None and len(data) > self.max_n_pulses:
-            if self.max_n_pulses_strategy == 'clamp':
-                data = data[:self.max_n_pulses]
-            elif self.max_n_pulses_strategy == 'random':
-                indices, _ = torch.sort(torch.randperm(len(data))[:self.max_n_pulses])
-                data = data[indices]
-            elif self.max_n_pulses_strategy == 'each_nth':
-                data = data[::len(data) // self.max_n_pulses]
-                data = data[:self.max_n_pulses]
-        
-        if self.mode != 'test': 
-            self.load_meta(fname)
-            meta = self.meta[fname][idx]
-            azimuth = meta['azimuth'].item()
-            zenith = meta['zenith'].item()
-            target = np.array([azimuth,zenith]).astype(np.float32)
-            target = torch.from_numpy(target)
-        else: target = df['event_id'].item()
+    def _load_meta(self, meta_filepath):
+        df = pl.read_parquet(meta_filepath).sort('event_id')
+        return df
+
+    def _advance(self, idx):
+        with self.lock:
+            index = 0
+            if self.current_tables['data'] is not None:
+                index = self.current_inner_index_permutation[self.current_inner_index]
+            need_load = False
+            if (
+                self.current_tables['data'] is None or 
+                self.current_inner_index >= len(self.current_tables['data'])
+            ):
+                if self.current_tables['data'] is None:
+                    self.current_outer_index = 0
+                    if self.shuffle_outer:
+                        np.random.shuffle(self.filepathes)
+                elif self.current_inner_index >= len(self.current_tables['data']):
+                    self.current_outer_index += 1
+
+                filepath = self.filepathes[self.current_outer_index]      
+                meta_filepath = self._filepath_to_meta_filepath(filepath)          
             
-        return data, target
+                self.current_inner_index = 0
 
+                self.current_inner_index_permutation = list(range(self.filepath_to_len[filepath]))
+                if self.shuffle_inner:
+                    np.random.shuffle(self.current_inner_index_permutation)
+                
+                index = self.current_inner_index_permutation[self.current_inner_index]
+                self.current_inner_index += 1
+                
+                need_load = True
 
-class RandomChunkSampler(torch.utils.data.Sampler[int]):
-    data_source: Sized
-    replacement: bool
+        if need_load:
+            data = self._load_data(filepath)
+            if meta_filepath is not None:
+                meta = self._load_meta(meta_filepath)
+            
+            with self.lock:
+                self.current_tables['data'] = data
+                self.current_tables['meta'] = meta
 
-    def __init__(self, data_source: Sized, chunks, num_samples: Optional[int] = None,
-                 generator=None, **kwargs) -> None:
-        # chunks - a list of chunk sizes
-        self.data_source = data_source
-        self._num_samples = num_samples
-        self.generator = generator
-        self.chunks = chunks
+        return index
 
-        if not isinstance(self.num_samples, int) or self.num_samples <= 0:
-            raise ValueError("num_samples should be a positive integer "
-                             "value, but got num_samples={}".format(self.num_samples))
+    # Override abstract method(s)
+    def _init(self) -> None:
+        """Set internal representation needed to read data from input file."""
+        pass
 
-    @property
-    def num_samples(self) -> int:
-        # dataset size might change at runtime
-        if self._num_samples is None:
-            return len(self.data_source)
-        return self._num_samples
+    def _post_init(self) -> None:
+        """Implemenation-specific code to be run after the main constructor."""
+        pass
 
-    def __iter__(self) -> Iterator[int]:
-        n = len(self.data_source)
-        cumsum = np.cumsum(self.chunks)
-        if self.generator is None:
-            seed = int(torch.empty((), dtype=torch.int64).random_().item())
-            generator = torch.Generator()
-            generator.manual_seed(seed)
+    def _get_all_indices(self) -> List[int]:
+        indices = []
+        for filepath in self.filepathes:
+            meta = pl.read_parquet(self._filepath_to_meta_filepath(filepath))
+            indices.extend(meta['event_id'].to_list())
+        return indices
+
+    def _get_event_index(
+        self, sequential_index: Optional[int]
+    ) -> Optional[int]:
+        """Return a the event index corresponding to a `sequential_index`."""
+        with self.lock:
+            return self.current_inner_index_permutation[self.current_inner_index]
+
+    def query_table(
+        self,
+        table: str,
+        columns: Union[List[str], str],
+        sequential_index: Optional[int] = None,
+        selection: Optional[str] = None,
+    ) -> List[Tuple[Any, ...]]:
+        """Query a table at a specific index, optionally with some selection.
+
+        Args:
+            table: Table to be queried.
+            columns: Columns to read out.
+            sequential_index: Sequentially numbered index
+                (i.e. in [0,len(self))) of the event to query. This _may_
+                differ from the indexation used in `self._indices`. If no value
+                is provided, the entire column is returned.
+            selection: Selection to be imposed before reading out data.
+                Defaults to None.
+
+        Returns:
+            List of tuples containing the values in `columns`. If the `table`
+                contains only scalar data for `columns`, a list of length 1 is
+                returned
+
+        Raises:
+            ColumnMissingException: If one or more element in `columns` is not
+                present in `table`.
+        """
+        with self.lock:
+            t = self.current_tables[table]
+            index = self.current_inner_index_permutation[self.current_inner_index]
+        
+        if len(set(t.columns).intersection(columns)) != len(columns):
+            raise ColumnMissingException
+
+        columns_to_explode = [c for c in columns if t[c].dtype == pl.List]
+        
+        if len(columns_to_explode) == 0:
+            return t[index][columns].rows()
         else:
-            generator = self.generator
+            return t[index][columns].explode(columns_to_explode).explode(columns_to_explode).rows()
 
-        chunk_list = torch.randperm(len(self.chunks), generator=generator).tolist()
-        # sample indexes chunk by chunk
-        for i in chunk_list:
-            chunk_len = self.chunks[i]
-            offset = cumsum[i] - cumsum[0]
-            yield from (offset + torch.randperm(chunk_len, generator=generator)).tolist()
+    # def _get_current_index(self) -> int:
+    #     """Return the current index."""
+    #     with self.lock:
+    #         return self.current_inner_index_permutation[self.current_inner_index]
 
-    def __len__(self) -> int:
-        return self.num_samples
+    def __getitem__(self, sequential_index: int) -> Data:
+        result = super().__getitem__(sequential_index)
+        
+        # Advance the sequence state and load new chunk 
+        # if current chunk is over or not initialized
+        self._advance(sequential_index)
+        
+        return result
 
 
 class ExpLRSchedulerPiece:
@@ -304,7 +371,7 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config["target"],
             loss_function=VonMisesFisher3DLoss(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['bias'],
             fix_points=fix_points,
         )
@@ -319,7 +386,7 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][0],
             loss_function=VonMisesFisher2DLoss(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['bias'],
             fix_points=fix_points,
         )
@@ -328,7 +395,7 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][1],
             loss_function=VonMisesFisher2DLoss(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['bias'],
             fix_points=fix_points,
         )
@@ -343,7 +410,7 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'],
             loss_function=CosineLoss(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['bias'],
             fix_points=fix_points,
         )
@@ -356,7 +423,7 @@ def build_model(
     #         hidden_size=gnn.nb_outputs,
     #         target_labels=truth,
     #         loss_function=CosineLoss(),
-    #         loss_weight='loss_weight' if 'loss_weight' in config else None,
+    #         loss_weight='loss_weight' if config['loss_weight'] else None,
     #         bias=config['bias'],
     #         fix_points=fix_points,
     #     )
@@ -370,7 +437,7 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][0],
             loss_function=VonMisesFisher2DLossSinCos(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['bias'],
             fix_points=fix_points,
         )
@@ -380,7 +447,7 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][1],
             loss_function=VonMisesFisher2DLossSinCos(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['bias'],
             fix_points=fix_points,
         )
@@ -400,7 +467,7 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][0],
             loss_function=EuclidianDistanceLossSinCos(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['bias'],
             fix_points=fix_points,
         )
@@ -410,7 +477,7 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][1],
             loss_function=EuclidianDistanceLossSinCos(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['bias'],
             fix_points=fix_points,
         )
@@ -428,7 +495,7 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][0],
             loss_function=EuclidianDistanceLossSinCos(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['bias'],
             fix_points=fix_points,
         )
@@ -445,7 +512,7 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][0],
             loss_function=EuclidianDistanceLossCos(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['bias'],
             fix_points=fix_points,
         )
@@ -459,7 +526,7 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][0],
             loss_function=VonMisesFisher2DLoss(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['bias'],
             fix_points=fix_points,
         )
@@ -472,7 +539,7 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][1],
             loss_function=VonMisesFisher2DLoss(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['bias'],
             fix_points=fix_points,
         )
@@ -485,7 +552,7 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'],
             loss_function=CosineLoss3D(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['bias'],
             fix_points=fix_points,
         )
@@ -583,21 +650,34 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
         # Will be constructed by default in make_dataloader
         pass
     elif config['dataset_type'] == 'cached':
-        train_dataset = IceCubeCache(
-            path=config['cached']['data_dir_path'],
-            mode='train',
-            meta_path=config['cached']['meta_path'],
-            cache_size=config['cached']['cache_size'],
+        train_dataset = SequentialIcecubeDataset(
+            filepathes=config['cached']['train_path'].glob('**/*.parquet'), 
+            geometry_path=config['cached']['geometry_path'],
+            features_columns=config['features'],
+            truth_columns=config['truth'],
+            index_column=config['index_column'],
+            meta_path=config['cached']['meta_path'], 
+            loss_weight_columns=config['loss_weight']['loss_weight_column'] if config['loss_weight'] else None,
+            loss_weight_transform=config['loss_weight']['loss_weight_transform'] if config['loss_weight'] else None,
             max_n_pulses=config['max_n_pulses']['max_n_pulses'],
             max_n_pulses_strategy=config['max_n_pulses']['max_n_pulses_strategy'],
+            shuffle_outer=config['shuffle_train'],
+            shuffle_inner=config['shuffle_train']
         )
-        val_dataset = IceCubeCache(
-            path=config['cached']['data_dir_path'],
-            mode='eval',
-            meta_path=config['cached']['meta_path'],
-            cache_size=config['cached']['cache_size'],
+
+        val_dataset = SequentialIcecubeDataset(
+            filepathes=config['cached']['val_path'].glob('**/*.parquet'),
+            geometry_path=config['cached']['geometry_path'],
+            features_columns=config['features'],
+            truth_columns=config['truth'],
+            index_column=config['index_column'],
+            meta_path=config['cached']['meta_path'], 
+            loss_weight_columns=config['loss_weight']['loss_weight_column'] if config['loss_weight'] else None,
+            loss_weight_transform=config['loss_weight']['loss_weight_transform'] if config['loss_weight'] else None,
             max_n_pulses=config['max_n_pulses']['max_n_pulses'],
-            max_n_pulses_strategy=config['max_n_pulses']['max_n_pulses_strategy'],
+            max_n_pulses_strategy='clamp',
+            shuffle_outer=False,
+            shuffle_inner=False
         )
 
     train_dataloader = make_dataloader(
@@ -609,7 +689,7 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
         truth = config['truth'],
         batch_size = config['batch_size'],
         num_workers = config['num_workers'],
-        shuffle = config['shuffle_train'],
+        shuffle = False,
         labels = {'direction': Direction(azimuth_key=config['truth'][1], zenith_key=config['truth'][0])},
         index_column = config['index_column'],
         truth_table = config['truth_table'],
