@@ -409,15 +409,23 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
     if 'loss_weight' in config:
         loss_weight_kwargs = config['loss_weight']
 
+    dataset_kwargs = dict()
     if config['dataset_type'] == 'sqlite':
         dataset_class = SQLiteDataset
     elif config['dataset_type'] == 'parquet':
         dataset_class = ParquetDataset
     elif config['dataset_type'] == 'sequential_parquet':
         dataset_class = SequentialParquetDataset
+        dataset_kwargs = dict(
+            geometry_path=config['sequential_parquet']['geometry_path'],
+            meta_path=config['sequential_parquet']['meta_path'],
+        )
     else:
         raise ValueError(f'Unknown dataset type {config["dataset_type"]}')
 
+
+    if config['dataset_type'] == 'sequential_parquet':
+        dataset_kwargs['filepathes'] = config['sequential_parquet']['train_path'].glob('**/*.parquet')
     train_dataloader = make_dataloader(
         dataset_class = dataset_class,
         db = config['path'],
@@ -434,13 +442,11 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
         transforms = config['train_transforms'],
         **loss_weight_kwargs,
         **max_n_pulses_kwargs,
-        **dict(
-            filepathes=config['sequential_parquet']['train_path'].glob('**/*.parquet'),
-            geometry_path=config['sequential_parquet']['geometry_path'],
-            meta_path=config['sequential_parquet']['meta_path'],
-        )
+        **dataset_kwargs
     )
     
+    if config['dataset_type'] == 'sequential_parquet':
+        dataset_kwargs['filepathes'] = config['sequential_parquet']['val_path'].glob('**/*.parquet')
     validate_dataloader = make_dataloader(
         dataset_class = dataset_class,
         db = config['inference_database_path'],
@@ -457,11 +463,7 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
         max_n_pulses=config['max_n_pulses']['max_n_pulses'],
         max_n_pulses_strategy="clamp",
         transforms = config['val_transforms'],
-        **dict(
-            filepathes=config['sequential_parquet']['val_path'].glob('**/*.parquet'),
-            geometry_path=config['sequential_parquet']['geometry_path'],
-            meta_path=config['sequential_parquet']['meta_path'],
-        )
+        **dataset_kwargs
     )
     return train_dataloader, validate_dataloader
 
