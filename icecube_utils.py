@@ -337,12 +337,24 @@ def build_model(
     # constructed here
     assert len(config["scheduler_kwargs"]["pieces"]) == 2, \
         "Only 2 pieces one-cycle LR is supported for now"
+
+    if config['dataset_type'] == 'parallel_parquet':
+        # There is only one epoch for that dataset type,
+        # but consisting data of all epochs
+        assert config['fit']['max_epochs'] == 1
+        single_epoch_steps = \
+            len(train_dataloader) // \
+            config['parallel_parquet']['actual_max_epochs']
+    else:
+        # Usial case
+        single_epoch_steps = len(train_dataloader)
+    
     scheduler_kwargs = {
         # 0.5 epoch warmup piece + rest piece
         "milestones": [
             0,
-            len(train_dataloader) / 2,
-            len(train_dataloader) * config["fit"]["max_epochs"],
+            int(single_epoch_steps / 2),
+            single_epoch_steps * config["fit"]["max_epochs"],
         ],
         "pieces": config["scheduler_kwargs"]["pieces"],
     }
@@ -419,12 +431,11 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
         dataset_kwargs = dict(
             geometry_path=config['parallel_parquet']['geometry_path'],
             meta_path=config['parallel_parquet']['meta_path'],
+            filepathes=config['parallel_parquet']['filepathes'],
         )
     else:
         raise ValueError(f'Unknown dataset type {config["dataset_type"]}')
 
-    if config['dataset_type'] == 'parallel_parquet':
-        dataset_kwargs['filepathes'] = config['parallel_parquet']['train_path'].glob('**/*.parquet')
     train_dataloader = make_dataloader(
         dataset_class = dataset_class,
         db = config['path'],

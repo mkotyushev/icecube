@@ -40,12 +40,6 @@ def parse_args():
         choices=['clamp', 'random_sequential', 'random'], 
         default='clamp'
     )
-    parser.add_argument(
-        '--mode', 
-        type=str, 
-        choices=['small', 'large', 'large_contd'], 
-        default='small'
-    )
     parser.add_argument('--n-blocks', type=int, default=None)
     parser.add_argument('--zero-new-block', action='store_true')
     parser.add_argument('--block-output-aggregation', type=str, choices=['mean', 'sum'], default='sum')
@@ -83,7 +77,6 @@ config = {
         'dataset_type': 'parallel_parquet',
         'parallel_parquet': {
             'train_path': Path('/workspace/icecube/data/train'),
-            'val_path': Path('/workspace/icecube/data/val'),
             'meta_path': Path('/workspace/icecube/data/train_meta'),
             'geometry_path': Path('/workspace/icecube/data/sensor_geometry.csv'),
         },
@@ -100,7 +93,7 @@ config = {
         "run_name_tag": 'my_example',
         "batch_size": 100,
         "accumulate_grad_batches": 1,
-        "num_workers": 1,
+        "num_workers": 4,
         # "target": 'zenith',
         # "target": 'angles_sincos_euclidean',
         "target": 'direction',
@@ -111,7 +104,7 @@ config = {
             "distribution_strategy": DDPStrategy(find_unused_parameters=False),
             "precision": '16-mixed', 
             "log_every_n_steps": 50,
-            "val_check_interval": 0.2,
+            "val_check_interval": 0.5,
             # "limit_train_batches": 100,
             # "limit_val_batches": 100,
             # "profiler": "simple",
@@ -120,6 +113,9 @@ config = {
         'base_dir': 'training',
         'bias': True,
         'dynedge': {},
+        # applicable only for dataset_type == 'sqlite',
+        # dataset_type == 'parquet' always shuffles data
+        # and moreover order is not really deterministic
         'shuffle_train': True,
         'optimizer_kwargs': {
             "lr": 1e-03, 
@@ -151,7 +147,6 @@ if __name__ == '__main__':
     args = parse_args()
     seed_everything(args.seed)
 
-    config['fit']['max_epochs'] = args.max_epochs
     config['batch_size'] = args.batch_size
     config['accumulate_grad_batches'] = args.accumulate_grad_batches
     config['dynedge']['dynedge_layer_sizes'] = [
@@ -160,17 +155,32 @@ if __name__ == '__main__':
     ]
     config['max_n_pulses']['max_n_pulses_strategy'] = args.max_n_pulses_strategy
 
-    if args.mode == 'large':
-        config['fit']['val_check_interval'] = 0.1
-        config['fit']['max_steps'] = 10000
-    elif args.mode == 'large_contd':
-        config['fit']['val_check_interval'] = 0.1
-        config['fit']['max_steps'] = -1
-    elif args.mode == 'small':
-        config['fit']['val_check_interval'] = 0.5
-        config['fit']['max_steps'] = -1
-    else:
-        raise ValueError(f'Unknown mode {args.mode}')
+    # Convert patience from epochs to validation checks
+    config['early_stopping_patience'] = int(
+        config['early_stopping_patience'] / 
+        config['fit']['val_check_interval']
+    )
+
+    # Replace max_epochs with iterating files max_epochs times
+    # to apply files shuffilg for parallel_parquet for each epoch
+    # and change related parameters accordingly
+    # TODO: fix it breaks limit_train_batches
+    if config['dataset_type'] == 'parallel_parquet':
+        config['fit']['max_epochs'] = 1
+
+        filepathes = sorted(
+            list(
+                config['parallel_parquet']['train_path'].glob('**/*.parquet')
+            )
+        )
+        config['parallel_parquet']['filepathes'] = []
+        for i in range(args.max_epochs):
+            random.shuffle(filepathes)
+            config['parallel_parquet']['filepathes'] += filepathes[:]
+
+        config['fit']['val_check_interval'] = config['fit']['val_check_interval'] / args.max_epochs
+
+        config['parallel_parquet']['actual_max_epochs'] = args.max_epochs
 
     # Set LR schedule
     if args.lr_schedule_type == 'linear':
@@ -183,12 +193,6 @@ if __name__ == '__main__':
             LinearLRSchedulerPiece(args.lr_onecycle_factors[0], args.lr_onecycle_factors[1]),
             ExpLRSchedulerPiece(args.lr_onecycle_factors[1], args.lr_onecycle_factors[2], decay=0.2),
         ]
-    
-    # Convert patience from epochs to validation checks
-    config['early_stopping_patience'] = int(
-        config['early_stopping_patience'] / 
-        config['fit']['val_check_interval']
-    )
 
     if args.weight_loss_by_inverse_n_pulses_log:
         config['loss_weight'] = {
