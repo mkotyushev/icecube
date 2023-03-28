@@ -345,16 +345,18 @@ def build_model(
         single_epoch_steps = \
             len(train_dataloader) // \
             config['parallel_parquet']['actual_max_epochs']
+        max_epochs = config['parallel_parquet']['actual_max_epochs']
     else:
         # Usial case
         single_epoch_steps = len(train_dataloader)
+        max_epochs = config['fit']['max_epochs']
     
     scheduler_kwargs = {
         # 0.5 epoch warmup piece + rest piece
         "milestones": [
             0,
             int(single_epoch_steps / 2),
-            single_epoch_steps * config["fit"]["max_epochs"],
+            single_epoch_steps * max_epochs,
         ],
         "pieces": config["scheduler_kwargs"]["pieces"],
     }
