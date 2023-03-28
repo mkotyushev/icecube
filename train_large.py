@@ -71,13 +71,13 @@ def first_last_pulse_index_to_loss_weight(first_last_pulse_index):
 features = FEATURES.KAGGLE
 truth = ['zenith', 'azimuth']
 
+# fold_0_val.db is obtained batch_656.parquet
+# train_path/*.parquet are assumed to be batches up to 655 (inclusive)
 config = {
-        # 'dataset_type': 'sqlite',
-        # 'dataset_type': 'parquet',
         'dataset_type': 'parallel_parquet',
         'parallel_parquet': {
-            'train_path': Path('/workspace/icecube/data/train'),
-            'meta_path': Path('/workspace/icecube/data/train_meta'),
+            'train_path': Path('/workspace/icecube/data/parquet/train'),
+            'meta_path': Path('/workspace/icecube/data/parquet/train_meta'),
             'geometry_path': Path('/workspace/icecube/data/sensor_geometry.csv'),
         },
         # "path": '/workspace/data2/batch_14.db',
