@@ -22,7 +22,8 @@ from icecube_utils import (
     FlipCoordinateTransform,
 )
 
-
+# example usage:
+# python train_large.py --model-save-dir /weights/test --max-epochs 1 --size-multiplier 1.0 --batch-size 512 --accumulate-grad-batches 1 --seed 0 --weight-loss-by-inverse-n-pulses-log --max-n-pulses-strategy random --mode small --enable-augmentations --lr-onecycle-factors 1e-02 1 1e-02 --lr-schedule-type linear
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--state-dict-path', type=Path, default=None)
@@ -68,7 +69,9 @@ def seed_everything(seed: int):
 
 def first_last_pulse_index_to_loss_weight(first_last_pulse_index):
     first, last = first_last_pulse_index[0][0], first_last_pulse_index[0][1]
-    return [[1 / np.log((last - first) + 1)]]
+    if first == last:
+        return [[1.0]]
+    return [[1 / np.log((last - first) + 2)]]
 
 
 features = FEATURES.KAGGLE
@@ -97,7 +100,7 @@ config = {
         "run_name_tag": 'my_example',
         "batch_size": 100,
         "accumulate_grad_batches": 1,
-        "num_workers": 0,
+        "num_workers": 1,
         # "target": 'zenith',
         # "target": 'angles_sincos_euclidean',
         "target": 'direction',
