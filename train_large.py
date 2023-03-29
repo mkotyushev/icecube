@@ -104,7 +104,7 @@ config = {
             "distribution_strategy": 'auto',
             "precision": '16-mixed', 
             "log_every_n_steps": 50,
-            "val_check_interval": 0.5,
+            "val_check_interval": 0.05,
             # "num_sanity_val_steps": 0,
             # "limit_train_batches": 100,
             # "limit_val_batches": 100,
