@@ -13,6 +13,7 @@ services:
     volumes:
       - .:/workspace/icecube:cached
       - /mnt/C_windows/icecube/data/:/workspace/data:cached
+      - data:/workspace/data2:cached
       - $SSH_AUTH_SOCK:${SSH_AUTH_SOCK}
     command: /bin/sh -c "while sleep 1000; do :; done"
     deploy:
@@ -24,3 +25,5 @@ services:
               capabilities: [gpu]
         limits:
           memory: 55g
+volumes:
+  data:
