@@ -77,15 +77,24 @@ truth = ['zenith', 'azimuth']
 # train_path/*.parquet are assumed to be batches up to 655 (inclusive)
 config = {
         'dataset_type': 'parallel_parquet',
+        # Pathes for large machine
         'parallel_parquet': {
             'train_path': Path('/workspace/icecube/data/parquet/train'),
             'meta_path': Path('/workspace/icecube/data/parquet/train_meta'),
             'geometry_path': Path('/workspace/icecube/data/sensor_geometry.csv'),
         },
-        # "path": '/workspace/data2/batch_14.db',
-        # "inference_database_path": '/workspace/data2/batch_656.db',
         "path": '/workspace/icecube/data/fold_0.db',
         "inference_database_path": '/workspace/icecube/data/fold_0_val.db',
+
+        # # Pathes for small machine
+        # 'parallel_parquet': {
+        #     'train_path': Path('/workspace/data2/train'),
+        #     'meta_path': Path('/workspace/data2/train_meta'),
+        #     'geometry_path': Path('/workspace/icecube/data/dataset/sensor_geometry.csv'),
+        # },
+        # "path": '/workspace/data2/batch_14.db',
+        # "inference_database_path": '/workspace/data2/batch_656.db',
+
         "pulsemap": 'pulse_table',
         "truth_table": 'meta_table',
         "features": features,
@@ -176,11 +185,21 @@ if __name__ == '__main__':
     if config['dataset_type'] == 'parallel_parquet':
         config['fit']['max_epochs'] = 1
 
-        filepathes = sorted(
-            list(
-                config['parallel_parquet']['train_path'].glob('**/*.parquet')
+        if args.train_mode == 'simplex':  # Simplex run on limited subset of train
+            filepathes = sorted(
+                [
+                    filepath
+                    for filepath in config['parallel_parquet']['train_path'].glob('**/*.parquet')
+                    if int(filepath.stem.split('_')[1]) < 20
+                ]
             )
-        )
+            config['fit']['val_check_interval'] = 1
+        else:
+            filepathes = sorted(
+                list(
+                    config['parallel_parquet']['train_path'].glob('**/*.parquet')
+                )
+            )
         config['parallel_parquet']['filepathes'] = []
         for i in range(args.max_epochs):
             random.shuffle(filepathes)

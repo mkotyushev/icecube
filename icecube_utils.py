@@ -492,12 +492,18 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
     return train_dataloader, validate_dataloader
 
 
-def train_dynedge(model, config, train_dataloader, validate_dataloader):
+def train_dynedge(
+    model, 
+    config, 
+    train_dataloader, 
+    validate_dataloader, 
+    callbacks: Optional[List[Callback]] = None
+):
     # Compile model
     torch.compile(model)
 
     # Training model
-    callbacks = [
+    default_callbacks = [
         LearningRateMonitor(logging_interval="step"),
         GradientAccumulationScheduler(
             scheduling={0: config['accumulate_grad_batches']}
@@ -508,6 +514,10 @@ def train_dynedge(model, config, train_dataloader, validate_dataloader):
         ),
         ProgressBar(),
     ]
+    if callbacks is None:
+        callbacks = default_callbacks
+    else:
+        callbacks += default_callbacks
 
     model_checkpoint_callback = ModelCheckpoint(
         dirpath='./checkpoints',
@@ -1333,6 +1343,7 @@ class SimplexNetGraphnet(Model):
         scheduler_class: Optional[type] = None,
         scheduler_kwargs: Optional[Dict] = None,
         scheduler_config: Optional[Dict] = None,
+        simplex_volume_loss_enabled: bool = True,
     ):
         super().__init__()
         self.save_hyperparameters(ignore=['base_model'])
@@ -1362,6 +1373,7 @@ class SimplexNetGraphnet(Model):
         self.n_verts = n_verts
         self.nsample = nsample
         self.current_vol_reg = self.reg_pars[0]
+        self.simplex_volume_loss_enabled = simplex_volume_loss_enabled
 
         self._optimizer_class = optimizer_class
         self._optimizer_kwargs = optimizer_kwargs or dict()
@@ -1431,17 +1443,29 @@ class SimplexNetGraphnet(Model):
                 loss = loss + self.simplex_model.net.compute_loss(output, batch)
         loss.div(self.nsample)
 
-        vol = self.simplex_model.total_volume().cuda()
-        log_vol = (vol + 1e-4).log()
+        volume_loss = 0
+        if self.simplex_volume_loss_enabled:
+            vol = self.simplex_model.total_volume().cuda()
+            log_vol = (vol + 1e-4).log()
 
-        loss = loss - self.current_vol_reg * log_vol
-        return loss
+            volume_loss = self.current_vol_reg * log_vol
+            loss = loss - volume_loss
+        return loss, volume_loss
 
     def training_step(self, batch, batch_idx):
-        loss = self.shared_step(batch, batch_idx)
+        loss, volume_loss = self.shared_step(batch, batch_idx)
         self.log(
             "train_loss",
             loss,
+            batch_size=self._get_batch_size(batch),
+            prog_bar=True,
+            on_epoch=True,
+            on_step=True,
+            sync_dist=True,
+        )
+        self.log(
+            "train_volume_loss",
+            volume_loss,
             batch_size=self._get_batch_size(batch),
             prog_bar=True,
             on_epoch=True,
@@ -1453,10 +1477,19 @@ class SimplexNetGraphnet(Model):
     
     def validation_step(self, batch: Data, batch_idx: int) -> Tensor:
         """Perform validation step."""
-        loss = self.shared_step(batch, batch_idx)
+        loss, volume_loss = self.shared_step(batch, batch_idx)
         self.log(
             "val_loss",
             loss,
+            batch_size=self._get_batch_size(batch),
+            prog_bar=True,
+            on_epoch=True,
+            on_step=False,
+            sync_dist=True,
+        )
+        self.log(
+            "val_volume_loss",
+            volume_loss,
             batch_size=self._get_batch_size(batch),
             prog_bar=True,
             on_epoch=True,
@@ -1470,7 +1503,7 @@ class SimplexNetGraphnet(Model):
     
     def add_vert(self, vertex_index: int):
         self.current_vol_reg = self.reg_pars[vertex_index]
-        self.simplex_model.add_vert(randomize_second_vertex=True)
+        self.simplex_model.add_vert()
 
     def fit(
         self,
@@ -1506,8 +1539,29 @@ class SimplexNetGraphnet(Model):
                 **trainer_kwargs
             )
 
+    def enable_simplex_volume_loss(self, enable: bool):
+        self.simplex_volume_loss_enabled = enable
+
     # def on_before_optimizer_step(self, optimizer):
     #     print(grad_norm(self, norm_type=2))
+
+class EnableSimplexVolumeLossCallback(Callback):
+    def __init__(self, enable_on_step: int):
+        self.enable_on_step = enable_on_step
+        self.steps = 0
+    
+    def on_train_batch_end(
+        self, trainer, pl_module, outputs, batch, batch_idx
+    ) -> None:
+        """Called when the train batch ends.
+
+        Note:
+            The value ``outputs["loss"]`` here will be the normalized value w.r.t ``accumulate_grad_batches`` of the
+            loss returned from ``training_step``.
+        """
+        if self.steps >= self.enable_on_step:
+            pl_module.enable_simplex_volume_loss(True)
+        self.steps += 1
 
 
 @patch('icecube_utils.StandardModel.forward', StandardModelGraphnet_forward)
@@ -1561,6 +1615,7 @@ def build_model_simplex(
         scheduler_config={
             "interval": "step",
         },
+        simplex_volume_loss_enabled=False,
     )
 
     # If building for inference, add vertices
@@ -1591,7 +1646,8 @@ def train_dynedge_simplex(
         simplex_model_wrapper,
         config,
         train_dataloader, 
-        validate_dataloader
+        validate_dataloader,
+        callbacks=[EnableSimplexVolumeLossCallback(len(train_dataloader) / 10)]
     )
     return simplex_model_wrapper
 
