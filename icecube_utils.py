@@ -15,7 +15,6 @@ from pytorch_lightning.callbacks import (
     ModelCheckpoint,
     LearningRateMonitor
 )
-from torch.optim.adamw import AdamW
 from torch.optim import Adam
 from torch.optim.lr_scheduler import LRScheduler
 from torch.nn import Module, Linear, ModuleList
@@ -381,7 +380,7 @@ def build_model(
         gnn=gnn,
         tasks=tasks,
         tasks_weiths=config["tasks_weights"] if "tasks_weights" in config else None,
-        optimizer_class=AdamW,
+        optimizer_class=config['optimizer_class'],
         optimizer_kwargs=config["optimizer_kwargs"],
         scheduler_class=PiecewiceFactorsLRScheduler,
         scheduler_kwargs=scheduler_kwargs,
@@ -1441,11 +1440,11 @@ class SimplexNetGraphnet(Model):
                 loss = self.simplex_model.net.compute_loss(output, batch)
             else:
                 loss = loss + self.simplex_model.net.compute_loss(output, batch)
-        loss.div(self.nsample)
+        loss = loss / self.nsample
 
         volume_loss_pos = 0
         if self.simplex_volume_loss_enabled:
-            vol = self.simplex_model.total_volume().cuda()
+            vol = self.simplex_model.total_volume()
             log_vol = (vol + 1e-4).log()
 
             volume_loss_pos = self.current_vol_reg * log_vol
@@ -1543,7 +1542,7 @@ class SimplexNetGraphnet(Model):
         self.simplex_volume_loss_enabled = enable
 
     # def on_before_optimizer_step(self, optimizer):
-    #     print(grad_norm(self, norm_type=2))
+    #     print(f'grad_norm: {grad_norm(self, norm_type=2)}')
 
 class EnableSimplexVolumeLossCallback(Callback):
     def __init__(self, enable_on_step: int):
@@ -1596,12 +1595,27 @@ def build_model_simplex(
     # constructed here
     assert len(config["scheduler_kwargs"]["pieces"]) == 2, \
         "Only 2 pieces one-cycle LR is supported for now"
+    if config['dataset_type'] == 'parallel_parquet':
+        # There is only one epoch for that dataset type,
+        # but consisting data of all epochs
+        assert config['fit']['max_epochs'] == 1
+        single_epoch_steps = \
+            len(train_dataloader) // \
+            config['parallel_parquet']['actual_max_epochs']
+        max_epochs = config['parallel_parquet']['actual_max_epochs']
+        warmup_epochs = config['parallel_parquet']['warmup_epochs']
+    else:
+        # Usial case
+        single_epoch_steps = len(train_dataloader)
+        max_epochs = config['fit']['max_epochs']
+        warmup_epochs = 0.5
+    
     scheduler_kwargs = {
         # 0.5 epoch warmup piece + rest piece
         "milestones": [
             0,
-            len(train_dataloader) / 2,
-            len(train_dataloader) * config["fit"]["max_epochs"],
+            single_epoch_steps * warmup_epochs,
+            single_epoch_steps * max_epochs,
         ],
         "pieces": config["scheduler_kwargs"]["pieces"],
     }
@@ -1612,7 +1626,7 @@ def build_model_simplex(
         LMBD=config['simplex']['LMBD'], 
         base_model=base_model, 
         nsample=config['simplex']['nsample'],
-        optimizer_class=AdamW,
+        optimizer_class=config['optimizer_class'],
         optimizer_kwargs=config["optimizer_kwargs"],
         scheduler_class=PiecewiceFactorsLRScheduler,
         scheduler_kwargs=scheduler_kwargs,

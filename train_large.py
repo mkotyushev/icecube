@@ -129,6 +129,7 @@ config = {
         # dataset_type == 'parquet' always shuffles data
         # and moreover order is not really deterministic
         'shuffle_train': True,
+        'optimizer_class': torch.optim.AdamW,
         'optimizer_kwargs': {
             "lr": 1e-03, 
             "eps": 1e-03
@@ -210,6 +211,10 @@ if __name__ == '__main__':
         config['parallel_parquet']['actual_max_epochs'] = args.max_epochs
         # originally was 0.5 on 10% of data, for parallel_parquet div by 10
         config['parallel_parquet']['warmup_epochs'] = 0.05
+
+    if args.train_mode == 'simplex':
+        config['fit']['gradient_clip_val'] = 100
+        config['fit']['gradient_clip_algorithm'] = 'norm'
 
     # Set LR schedule
     if args.lr_schedule_type == 'linear':
