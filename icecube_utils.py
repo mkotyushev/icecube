@@ -1,12 +1,12 @@
 
 import gc
 from pathlib import Path
-import math
 import numpy as np
-import pandas as pd
 import os
 import torch
-from copy import deepcopy
+import pandas as pd
+import gc, os
+import numpy as np
 from mock import patch
 from typing import Any, Dict, List
 from pytorch_lightning.callbacks import (
@@ -19,7 +19,6 @@ from torch.optim.adamw import AdamW
 from torch.optim.lr_scheduler import LRScheduler
 from torch.nn import Module, Linear, ModuleList
 from torch import Tensor
-from graphnet.data.constants import FEATURES, TRUTH
 from graphnet.models import StandardModel
 from graphnet.models.detector.icecube import IceCubeKaggle
 from graphnet.models.gnn import DynEdge
@@ -30,6 +29,8 @@ from graphnet.training.loss_functions import CosineLoss, CosineLoss3D, Euclidian
 from graphnet.training.labels import Direction
 from graphnet.training.utils import make_dataloader
 from graphnet.utilities.logging import get_logger
+from graphnet.data.sqlite import SQLiteDataset
+from graphnet.data.parquet import ParquetDataset, ParallelParquetTrainDataset
 
 
 # Constants
@@ -135,7 +136,7 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config["target"],
             loss_function=VonMisesFisher3DLoss(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['bias'],
             fix_points=fix_points,
         )
@@ -150,7 +151,7 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][0],
             loss_function=VonMisesFisher2DLoss(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['bias'],
             fix_points=fix_points,
         )
@@ -159,7 +160,7 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][1],
             loss_function=VonMisesFisher2DLoss(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['bias'],
             fix_points=fix_points,
         )
@@ -174,7 +175,7 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'],
             loss_function=CosineLoss(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['bias'],
             fix_points=fix_points,
         )
@@ -187,7 +188,7 @@ def build_model(
     #         hidden_size=gnn.nb_outputs,
     #         target_labels=truth,
     #         loss_function=CosineLoss(),
-    #         loss_weight='loss_weight' if 'loss_weight' in config else None,
+    #         loss_weight='loss_weight' if config['loss_weight'] else None,
     #         bias=config['bias'],
     #         fix_points=fix_points,
     #     )
@@ -201,7 +202,7 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][0],
             loss_function=VonMisesFisher2DLossSinCos(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['bias'],
             fix_points=fix_points,
         )
@@ -211,7 +212,7 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][1],
             loss_function=VonMisesFisher2DLossSinCos(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['bias'],
             fix_points=fix_points,
         )
@@ -231,7 +232,7 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][0],
             loss_function=EuclidianDistanceLossSinCos(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['bias'],
             fix_points=fix_points,
         )
@@ -241,7 +242,7 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][1],
             loss_function=EuclidianDistanceLossSinCos(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['bias'],
             fix_points=fix_points,
         )
@@ -259,7 +260,7 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][0],
             loss_function=EuclidianDistanceLossSinCos(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['bias'],
             fix_points=fix_points,
         )
@@ -276,7 +277,7 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][0],
             loss_function=EuclidianDistanceLossCos(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['bias'],
             fix_points=fix_points,
         )
@@ -290,7 +291,7 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][0],
             loss_function=VonMisesFisher2DLoss(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['bias'],
             fix_points=fix_points,
         )
@@ -303,7 +304,7 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][1],
             loss_function=VonMisesFisher2DLoss(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['bias'],
             fix_points=fix_points,
         )
@@ -316,7 +317,7 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'],
             loss_function=CosineLoss3D(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
+            loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['bias'],
             fix_points=fix_points,
         )
@@ -336,12 +337,28 @@ def build_model(
     # constructed here
     assert len(config["scheduler_kwargs"]["pieces"]) == 2, \
         "Only 2 pieces one-cycle LR is supported for now"
+
+    if config['dataset_type'] == 'parallel_parquet':
+        # There is only one epoch for that dataset type,
+        # but consisting data of all epochs
+        assert config['fit']['max_epochs'] == 1
+        single_epoch_steps = \
+            len(train_dataloader) // \
+            config['parallel_parquet']['actual_max_epochs']
+        max_epochs = config['parallel_parquet']['actual_max_epochs']
+        warmup_epochs = config['parallel_parquet']['warmup_epochs']
+    else:
+        # Usial case
+        single_epoch_steps = len(train_dataloader)
+        max_epochs = config['fit']['max_epochs']
+        warmup_epochs = 0.5
+    
     scheduler_kwargs = {
         # 0.5 epoch warmup piece + rest piece
         "milestones": [
             0,
-            len(train_dataloader) / 2,
-            len(train_dataloader) * config["fit"]["max_epochs"],
+            single_epoch_steps * warmup_epochs,
+            single_epoch_steps * max_epochs,
         ],
         "pieces": config["scheduler_kwargs"]["pieces"],
     }
@@ -408,8 +425,23 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
     if 'loss_weight' in config:
         loss_weight_kwargs = config['loss_weight']
 
+    dataset_kwargs = dict()
+    if config['dataset_type'] == 'sqlite':
+        dataset_class = SQLiteDataset
+    elif config['dataset_type'] == 'parquet':
+        dataset_class = ParquetDataset
+    elif config['dataset_type'] == 'parallel_parquet':
+        dataset_class = ParallelParquetTrainDataset
+        dataset_kwargs = dict(
+            geometry_path=config['parallel_parquet']['geometry_path'],
+            meta_path=config['parallel_parquet']['meta_path'],
+            filepathes=config['parallel_parquet']['filepathes'],
+        )
+    else:
+        raise ValueError(f'Unknown dataset type {config["dataset_type"]}')
+
     train_dataloader = make_dataloader(
-        dataset_class = config['dataset_class'],
+        dataset_class = dataset_class,
         db = config['path'],
         selection = None,
         pulsemaps = config['pulsemap'],
@@ -417,17 +449,18 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
         truth = config['truth'],
         batch_size = config['batch_size'],
         num_workers = config['num_workers'],
-        shuffle = config['shuffle_train'],
+        shuffle = False,
         labels = {'direction': Direction(azimuth_key=config['truth'][1], zenith_key=config['truth'][0])},
         index_column = config['index_column'],
         truth_table = config['truth_table'],
         transforms = config['train_transforms'],
         **loss_weight_kwargs,
-        **max_n_pulses_kwargs
+        **max_n_pulses_kwargs,
+        **dataset_kwargs
     )
     
     validate_dataloader = make_dataloader(
-        dataset_class = config['dataset_class'],
+        dataset_class = SQLiteDataset,
         db = config['inference_database_path'],
         selection = None,
         pulsemaps = config['pulsemap'],
