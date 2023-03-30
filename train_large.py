@@ -104,7 +104,7 @@ config = {
             "distribution_strategy": 'auto',
             "precision": '16-mixed', 
             "log_every_n_steps": 50,
-            "val_check_interval": 0.05,
+            "val_check_interval": 0.05,  # originally was 0.5 on 10% of data, for parallel_parquet div by 10
             # "num_sanity_val_steps": 0,
             # "limit_train_batches": 100,
             # "limit_val_batches": 100,
@@ -182,6 +182,8 @@ if __name__ == '__main__':
         config['fit']['val_check_interval'] = config['fit']['val_check_interval'] / args.max_epochs
 
         config['parallel_parquet']['actual_max_epochs'] = args.max_epochs
+        # originally was 0.5 on 10% of data, for parallel_parquet div by 10
+        config['parallel_parquet']['warmup_epochs'] = 0.05
 
     # Set LR schedule
     if args.lr_schedule_type == 'linear':
