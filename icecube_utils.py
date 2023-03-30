@@ -1563,6 +1563,10 @@ class EnableSimplexVolumeLossCallback(Callback):
             pl_module.enable_simplex_volume_loss(True)
         self.steps += 1
 
+    def on_fit_start(self, trainer, pl_module) -> None:
+        pl_module.enable_simplex_volume_loss(False)
+        self.steps = 0
+
 
 @patch('icecube_utils.StandardModel.forward', StandardModelGraphnet_forward)
 @patch('icecube_utils.DynEdge.forward', DynEdgeGraphnet_forward)
@@ -1647,7 +1651,7 @@ def train_dynedge_simplex(
         config,
         train_dataloader, 
         validate_dataloader,
-        callbacks=[EnableSimplexVolumeLossCallback(len(train_dataloader) / 10)]
+        callbacks=[EnableSimplexVolumeLossCallback(10)]
     )
     return simplex_model_wrapper
 
