@@ -1443,14 +1443,14 @@ class SimplexNetGraphnet(Model):
                 loss = loss + self.simplex_model.net.compute_loss(output, batch)
         loss.div(self.nsample)
 
-        volume_loss = 0
+        volume_loss_pos = 0
         if self.simplex_volume_loss_enabled:
             vol = self.simplex_model.total_volume().cuda()
             log_vol = (vol + 1e-4).log()
 
-            volume_loss = self.current_vol_reg * log_vol
-            loss = loss - volume_loss
-        return loss, volume_loss
+            volume_loss_pos = self.current_vol_reg * log_vol
+            loss = loss - volume_loss_pos
+        return loss, -volume_loss_pos
 
     def training_step(self, batch, batch_idx):
         loss, volume_loss = self.shared_step(batch, batch_idx)
