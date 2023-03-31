@@ -232,7 +232,7 @@ if __name__ == '__main__':
         config['loss_weight'] = {
             'loss_weight_table': 'meta_table',
             'loss_weight_columns': ['zenith'],
-            'loss_weight_transform': WeightLossByZenithCount('./weights_info.csv'),
+            'loss_weight_transform': WeightLossByZenithCount('./weights_info.tsv'),
         }
 
     if args.enable_augmentations:
