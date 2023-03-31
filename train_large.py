@@ -1,4 +1,5 @@
 import argparse
+import pandas as pd
 import torch
 import random, os
 import numpy as np
@@ -34,7 +35,12 @@ def parse_args():
     parser.add_argument('--batch-size', type=int, default=100)
     parser.add_argument('--accumulate-grad-batches', type=int, default=1)
     parser.add_argument('--seed', type=int, default=0)
-    parser.add_argument('--weight-loss-by-inverse-n-pulses-log', action='store_true')
+    parser.add_argument(
+        '--loss-weight-strategy', 
+        type=str, 
+        choices=['inverse_n_pulses_log', 'zenith_count'],
+        default=None
+    )
     parser.add_argument(
         '--max-n-pulses-strategy', 
         type=str, 
@@ -70,6 +76,19 @@ def first_last_pulse_index_to_loss_weight(first_last_pulse_index):
     return [[1 / np.log((last - first) + 2)]]
 
 
+class WeightLossByZenithCount:
+    def __init__(self, weights_info_tsv_path):
+        weights_info = pd.read_csv(weights_info_tsv_path, sep='\t')
+        self.weights = weights_info['weights'].values
+        self.zenith_bins = weights_info['zenith_bins'].values
+
+    def __call__(self, zenith):
+        zenith = zenith[0][0]
+        index = np.digitize(zenith, self.zenith_bins) - 1
+        index = np.clip(index, 0, len(self.weights) - 1)
+        return [[self.weights[index]]]
+
+
 features = FEATURES.KAGGLE
 truth = ['zenith', 'azimuth']
 
@@ -77,23 +96,24 @@ truth = ['zenith', 'azimuth']
 # train_path/*.parquet are assumed to be batches up to 655 (inclusive)
 config = {
         'dataset_type': 'parallel_parquet',
-        # Pathes for large machine
-        'parallel_parquet': {
-            'train_path': Path('/workspace/icecube/data/parquet/train'),
-            'meta_path': Path('/workspace/icecube/data/parquet/train_meta'),
-            'geometry_path': Path('/workspace/icecube/data/sensor_geometry.csv'),
-        },
-        "path": '/workspace/icecube/data/fold_0.db',
-        "inference_database_path": '/workspace/icecube/data/fold_0_val.db',
-
-        # # Pathes for small machine
+        # 'dataset_type': 'sqlite',
+        # # Pathes for large machine
         # 'parallel_parquet': {
-        #     'train_path': Path('/workspace/data2/train'),
-        #     'meta_path': Path('/workspace/data2/train_meta'),
-        #     'geometry_path': Path('/workspace/icecube/data/dataset/sensor_geometry.csv'),
+        #     'train_path': Path('/workspace/icecube/data/parquet/train'),
+        #     'meta_path': Path('/workspace/icecube/data/parquet/train_meta'),
+        #     'geometry_path': Path('/workspace/icecube/data/sensor_geometry.csv'),
         # },
-        # "path": '/workspace/data2/batch_14.db',
-        # "inference_database_path": '/workspace/data2/batch_656.db',
+        # "path": '/workspace/icecube/data/fold_0.db',
+        # "inference_database_path": '/workspace/icecube/data/fold_0_val.db',
+
+        # Pathes for small machine
+        'parallel_parquet': {
+            'train_path': Path('/workspace/data2/train'),
+            'meta_path': Path('/workspace/data2/train_meta'),
+            'geometry_path': Path('/workspace/icecube/data/dataset/sensor_geometry.csv'),
+        },
+        "path": '/workspace/data2/batch_14.db',
+        "inference_database_path": '/workspace/data2/batch_656.db',
 
         "pulsemap": 'pulse_table',
         "truth_table": 'meta_table',
@@ -144,11 +164,7 @@ config = {
             'max_n_pulses': 200,
             'max_n_pulses_strategy': 'clamp'
         },
-        'loss_weight': {
-            'loss_weight_table': 'meta_table',
-            'loss_weight_columns': ['first_pulse_index', 'last_pulse_index'],
-            'loss_weight_transform': first_last_pulse_index_to_loss_weight,
-        },
+        'loss_weight': {},
         'zero_new_block': False,
         'block_output_aggregation': 'sum',
         'train_transforms': [],
@@ -228,14 +244,18 @@ if __name__ == '__main__':
             ExpLRSchedulerPiece(args.lr_onecycle_factors[1], args.lr_onecycle_factors[2], decay=0.2),
         ]
 
-    if args.weight_loss_by_inverse_n_pulses_log:
+    if args.loss_weight_strategy == 'inverse_n_pulses_log':
         config['loss_weight'] = {
             'loss_weight_table': 'meta_table',
             'loss_weight_columns': ['first_pulse_index', 'last_pulse_index'],
             'loss_weight_transform': first_last_pulse_index_to_loss_weight,
         }
-    else:
-        config['loss_weight'] = {}
+    elif args.loss_weight_strategy == 'zenith_count':
+        config['loss_weight'] = {
+            'loss_weight_table': 'meta_table',
+            'loss_weight_columns': ['zenith'],
+            'loss_weight_transform': WeightLossByZenithCount('./weights_info.tsv'),
+        }
 
     if args.enable_augmentations:
         if config['target'] in ['zenith_sincos_euclidean_cancel_azimuth', 'zenith']:
