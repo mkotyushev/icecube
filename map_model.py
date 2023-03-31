@@ -588,6 +588,8 @@ def map_model(args, model_from, model_to, dataloader, n_samples, size_multiplier
 def main(args):
     models = {}
 
+    config['dataset_type'] = 'sqlite'
+
     config_from = deepcopy(config)
     config_from['dynedge']['dynedge_layer_sizes'] = [(128, 256), (336, 256), (336, 256), (336, 256)]
 
@@ -602,25 +604,10 @@ def main(args):
         for x, y in [(128, 256), (336, 256), (336, 256), (336, 256)]
     ]
 
-    models['to'] = load_pretrained_model(
+    models['to'], train_dataloader = load_pretrained_model(
         config=config_to, 
-        path=str(args.to_model_state_dict_path)
-    )
-
-    # Map from model to to model
-    train_dataloader = make_dataloader(db=config_from['path'],
-        selection=None, # Entire database
-        pulsemaps=config_from['pulsemap'],
-        features=features,
-        truth=truth,
-        batch_size=args.act_num_samples,
-        num_workers=config_from['num_workers'],
-        shuffle=False,
-        labels={'direction': Direction()},
-        index_column=config_from['index_column'],
-        truth_table=config_from['truth_table'],
-        max_n_pulses = config['max_n_pulses']['max_n_pulses'],
-        max_n_pulses_strategy='clamp',
+        path=str(args.to_model_state_dict_path),
+        return_train_dataloader=True
     )
 
     models['mapped'] = map_model(
