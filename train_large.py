@@ -95,23 +95,23 @@ truth = ['zenith', 'azimuth']
 config = {
         'dataset_type': 'parallel_parquet',
         # 'dataset_type': 'sqlite',
-        # # Pathes for large machine
-        # 'parallel_parquet': {
-        #     'train_path': Path('/workspace/icecube/data/parquet/train'),
-        #     'meta_path': Path('/workspace/icecube/data/parquet/train_meta'),
-        #     'geometry_path': Path('/workspace/icecube/data/sensor_geometry.csv'),
-        # },
-        # "path": '/workspace/icecube/data/fold_0.db',
-        # "inference_database_path": '/workspace/icecube/data/fold_0_val.db',
-
-        # Pathes for small machine
+        # Pathes for large machine
         'parallel_parquet': {
-            'train_path': Path('/workspace/data2/train'),
-            'meta_path': Path('/workspace/data2/train_meta'),
-            'geometry_path': Path('/workspace/icecube/data/dataset/sensor_geometry.csv'),
+            'train_path': Path('/workspace/icecube/data/parquet/train'),
+            'meta_path': Path('/workspace/icecube/data/parquet/train_meta'),
+            'geometry_path': Path('/workspace/icecube/data/sensor_geometry.csv'),
         },
-        "path": '/workspace/data2/batch_14.db',
-        "inference_database_path": '/workspace/data2/batch_656.db',
+        "path": '/workspace/icecube/data/fold_0.db',
+        "inference_database_path": '/workspace/icecube/data/fold_0_val.db',
+
+        # # Pathes for small machine
+        # 'parallel_parquet': {
+        #     'train_path': Path('/workspace/data2/train'),
+        #     'meta_path': Path('/workspace/data2/train_meta'),
+        #     'geometry_path': Path('/workspace/icecube/data/dataset/sensor_geometry.csv'),
+        # },
+        # "path": '/workspace/data2/batch_14.db',
+        # "inference_database_path": '/workspace/data2/batch_656.db',
 
         "pulsemap": 'pulse_table',
         "truth_table": 'meta_table',
