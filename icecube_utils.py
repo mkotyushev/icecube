@@ -1769,7 +1769,7 @@ def train_dynedge_simplex(
                 monitor='volume_loss',
                 start_step=start_simplex_steps + 1,
                 mode='min',
-                min_delta=1e-6,
+                min_delta=1e-9,
                 patience=500,
             )
         ]
