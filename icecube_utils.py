@@ -1368,6 +1368,7 @@ class SimplexNetGraphnet(Model):
         self.nsample = nsample
         self.current_vol_reg = self.reg_pars[0]
         self.simplex_volume_loss_enabled = simplex_volume_loss_enabled
+        assert infrerence_sampling_average in ['angles', 'direction']
         self.infrerence_sampling_average = infrerence_sampling_average
 
         self._optimizer_class = optimizer_class
@@ -1585,9 +1586,10 @@ class SimplexNetGraphnet(Model):
     #     print(f'grad_norm: {grad_norm(self, norm_type=2)}')
 
 class EnableSimplexVolumeLossCallback(Callback):
-    def __init__(self, enable_on_step: int):
+    def __init__(self, enable_on_step: int, reset_on_fit_start: bool = True):
         self.enable_on_step = enable_on_step
         self.steps = 0
+        self.reset_on_fit_start = reset_on_fit_start
     
     def on_train_batch_end(
         self, trainer, pl_module, outputs, batch, batch_idx
@@ -1603,8 +1605,9 @@ class EnableSimplexVolumeLossCallback(Callback):
         self.steps += 1
 
     def on_fit_start(self, trainer, pl_module) -> None:
-        pl_module.enable_simplex_volume_loss(False)
-        self.steps = 0
+        if self.reset_on_fit_start:
+            pl_module.enable_simplex_volume_loss(False)
+            self.steps = 0
 
 
 class EarlyStoppingTrainStepCallback(Callback):
@@ -1757,19 +1760,19 @@ def train_dynedge_simplex(
             config, 
             state_dict_path
         )
-    start_simplex_steps = 100
+    start_simplex_steps = 0
     simplex_model_wrapper = train_dynedge(
         simplex_model_wrapper,
         config,
         train_dataloader, 
         validate_dataloader,
         callbacks=[
-            EnableSimplexVolumeLossCallback(start_simplex_steps),
+            EnableSimplexVolumeLossCallback(start_simplex_steps, reset_on_fit_start=False),
             EarlyStoppingTrainStepCallback(
                 monitor='volume_loss',
                 start_step=start_simplex_steps + 1,
                 mode='min',
-                min_delta=1e-9,
+                min_delta=1e-10,
                 patience=500,
             )
         ]
