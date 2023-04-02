@@ -404,7 +404,7 @@ def load_pretrained_model(
         logger.info(f'Loading model from {path}')
         model = StandardModel.load(path)
     else:
-        if config['train_mode'] == 'simplex':
+        if config['train_mode'] == 'simplex_inference':
             model, _, _ = build_model_simplex(
                 config=config, 
                 state_dict_path=None,
