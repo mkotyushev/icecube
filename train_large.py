@@ -197,11 +197,6 @@ if __name__ == '__main__':
         config['fit']['val_check_interval']
     )
 
-    # Simplex requires higher precision
-    if args.train_mode == 'simplex':
-        config['fit']['precision'] = 64
-        torch.set_float32_matmul_precision('highest')
-
     # Replace max_epochs with iterating files max_epochs times
     # to apply files shuffilg for parallel_parquet for each epoch
     # and change related parameters accordingly
