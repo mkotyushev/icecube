@@ -27,6 +27,7 @@ def parse_args():
     parser.add_argument('from_model_state_dict_path', type=str)
     parser.add_argument('to_model_state_dict_path', type=str)
     parser.add_argument('mapped_model_state_dict_path', type=str)
+    parser.add_argument('--simplex_model_state_dict_path', type=str, required=False, default=None)
     args = parser.parse_args()
 
     return args
@@ -50,6 +51,7 @@ def main(args):
         'from': args.from_model_state_dict_path,
         'to': args.to_model_state_dict_path,
         'mapped': args.mapped_model_state_dict_path,
+        'simplex': args.simplex_model_state_dict_path,
     }
 
     for model_name, state_dict_path in model_name_to_state_dict_paths.items():
@@ -63,6 +65,10 @@ def main(args):
                     (int(x * args.size_multiplier), int(y * args.size_multiplier)) 
                     for x, y in [(128, 256), (336, 256), (336, 256), (336, 256)]
                 ]
+            if model_name == 'simplex' and state_dict_path is not None:
+                config['train_mode'] = 'simplex'
+                config['simplex']['nsample'] = 20
+
             config['batch_size'] = 512
 
             model = load_pretrained_model(

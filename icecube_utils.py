@@ -404,8 +404,15 @@ def load_pretrained_model(
         logger.info(f'Loading model from {path}')
         model = StandardModel.load(path)
     else:
-        model = build_model(config = config, 
-                            train_dataloader = train_dataloader)
+        if config['train_mode'] == 'simplex':
+            model = build_model_simplex(
+                config=config, 
+                train_dataloader=train_dataloader,
+                add_vertices=True
+            )
+        else:
+            model = build_model(config = config, 
+                                train_dataloader = train_dataloader)
         #model._inference_trainer = Trainer(config['fit'])
         logger.info(f'Current model state dict keys: {model.state_dict().keys()}')
 
@@ -1472,7 +1479,10 @@ class SimplexNetGraphnet(Model):
             sync_dist=True,
         )
 
-        return loss
+        return {
+            'loss': loss,
+            'volume_loss': volume_loss,
+        }
     
     def validation_step(self, batch: Data, batch_idx: int) -> Tensor:
         """Perform validation step."""
@@ -1564,6 +1574,60 @@ class EnableSimplexVolumeLossCallback(Callback):
 
     def on_fit_start(self, trainer, pl_module) -> None:
         pl_module.enable_simplex_volume_loss(False)
+        self.steps = 0
+
+
+class EarlyStoppingTrainStepCallback(Callback):
+    mode_dict = {"min": torch.lt, "max": torch.gt}
+
+    def __init__(self, monitor, start_step, mode='min', min_delta=0.0, patience=0):
+        self.monitor = monitor
+
+        assert start_step >= 0, f"EarlyStopping requires start_step >= 0, got {start_step}"
+        self.start_step = start_step
+
+        assert mode in self.mode_dict, f"mode {mode} is unknown!"
+        self.monitor_op = self.mode_dict[mode]
+
+        assert min_delta >= 0, f"EarlyStopping requires min_delta >= 0, got {min_delta}"
+        self.min_delta = torch.tensor(min_delta)
+        self.min_delta *= (1 if self.monitor_op == torch.gt else -1)
+
+        assert patience >= 0, f"EarlyStopping requires patience >= 0, got {patience}"
+        self.patience = patience
+
+        self.best = None
+        self.wait = 0
+        self.steps = 0
+    
+    def on_train_batch_end(
+        self, trainer, pl_module, outputs, batch, batch_idx
+    ) -> None:
+        """Called when the train batch ends.
+
+        Note:
+            The value ``outputs["loss"]`` here will be the normalized value w.r.t ``accumulate_grad_batches`` of the
+            loss returned from ``training_step``.
+        """
+        if self.steps >= self.start_step:
+            if self.best is None:
+                self.best = outputs[self.monitor]
+            else:
+                if self.monitor_op(
+                    outputs[self.monitor] - self.min_delta, 
+                    self.best
+                ):
+                    self.best = outputs[self.monitor]
+                    self.wait = 0
+                else:
+                    self.wait += 1
+                    if self.wait >= self.patience:
+                        trainer.should_stop = True
+        self.steps += 1
+
+    def on_train_epoch_start(self, trainer, pl_module) -> None:
+        self.best = None
+        self.wait = 0
         self.steps = 0
 
 
@@ -1660,12 +1724,22 @@ def train_dynedge_simplex(
             config, 
             state_dict_path
         )
+    start_simplex_steps = 100
     simplex_model_wrapper = train_dynedge(
         simplex_model_wrapper,
         config,
         train_dataloader, 
         validate_dataloader,
-        callbacks=[EnableSimplexVolumeLossCallback(10)]
+        callbacks=[
+            EnableSimplexVolumeLossCallback(start_simplex_steps),
+            EarlyStoppingTrainStepCallback(
+                monitor='volume_loss',
+                start_step=start_simplex_steps + 1,
+                mode='min',
+                min_delta=1e-6,
+                patience=500,
+            )
+        ]
     )
     return simplex_model_wrapper
 
