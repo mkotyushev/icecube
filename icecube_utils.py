@@ -405,9 +405,9 @@ def load_pretrained_model(
         model = StandardModel.load(path)
     else:
         if config['train_mode'] == 'simplex':
-            model = build_model_simplex(
+            model, _, _ = build_model_simplex(
                 config=config, 
-                train_dataloader=train_dataloader,
+                state_dict_path=None,
                 add_vertices=True
             )
         else:
@@ -1326,14 +1326,15 @@ class SimplexNetGraphnet(Model):
         architecture, 
         n_verts, 
         LMBD, 
-        base_model, 
         nsample,
+        base_model=None, 
         optimizer_class: type = Adam,
         optimizer_kwargs: Optional[Dict] = None,
         scheduler_class: Optional[type] = None,
         scheduler_kwargs: Optional[Dict] = None,
         scheduler_config: Optional[Dict] = None,
         simplex_volume_loss_enabled: bool = True,
+        infrerence_sampling_average: str = 'angles'
     ):
         super().__init__()
         self.save_hyperparameters(ignore=['base_model'])
@@ -1358,12 +1359,16 @@ class SimplexNetGraphnet(Model):
         n_vert = len(fix_pts)
         self.simplex_model = SimplexNet(10, architecture, n_vert=n_vert,
                            fix_points=fix_pts).cuda()
-        self.simplex_model.import_base_parameters(base_model, 0)
+        self.prediction_columns = self.simplex_model.net.prediction_columns
+        self.additional_attributes = self.simplex_model.net.additional_attributes
+        if base_model is not None:
+            self.simplex_model.import_base_parameters(base_model, 0)
 
         self.n_verts = n_verts
         self.nsample = nsample
         self.current_vol_reg = self.reg_pars[0]
         self.simplex_volume_loss_enabled = simplex_volume_loss_enabled
+        self.infrerence_sampling_average = infrerence_sampling_average
 
         self._optimizer_class = optimizer_class
         self._optimizer_kwargs = optimizer_kwargs or dict()
@@ -1492,7 +1497,48 @@ class SimplexNetGraphnet(Model):
         return loss
 
     def forward(self, data: Data) -> List[Union[Tensor, Data]]:
-        return self.simplex_model(data)
+        """Perform forward pass."""
+        # Sample
+        output = []
+        for _ in range(self.nsample):
+            if not output:
+                for task_output in self.simplex_model(data):
+                    output.append([task_output])
+            else:
+                for i, task_output in enumerate(self.simplex_model(data)):
+                    output[i].append(task_output)
+
+        # Average over samples (in angles space)
+        for i in range(len(output)):
+            if self.infrerence_sampling_average == 'angles':
+                task_output = output[i]  # list of nsamples, each is (nbatch, 4)
+                # Normalize
+                task_output = torch.stack(task_output, dim=0)  # (nsamples, nbatch, 4)
+                x, y, z = \
+                    task_output[:, :, 0], \
+                    task_output[:, :, 1], \
+                    task_output[:, :, 2]  # each is (nsamples, nbatch)
+                norm = (x ** 2 + y ** 2 + z ** 2).sqrt()
+                x = x / norm
+                y = y / norm
+                z = z / norm
+
+                # Convert to angles & average
+                azimuth = torch.atan2(y, x).mean(dim=0)  # (nbatch)
+                zenith = torch.acos(z).mean(dim=0)  # (nbatch)
+
+                # Convert back to cartesian
+                x = torch.cos(azimuth) * torch.sin(zenith)  # (nbatch)
+                y = torch.sin(azimuth) * torch.sin(zenith)  # (nbatch)
+                z = torch.cos(zenith)  # (nbatch)
+                kappa = task_output[:, :, 3].mean(dim=0)  # (nbatch)
+
+                # Save back
+                output[i] = torch.stack([x, y, z, kappa], dim=1)
+            elif self.infrerence_sampling_average == 'direction':
+                output[i] = torch.stack(output[i], dim=0).mean(dim=0)
+
+        return output
     
     def add_vert(self, vertex_index: int):
         self.current_vol_reg = self.reg_pars[vertex_index]
@@ -1624,13 +1670,15 @@ class EarlyStoppingTrainStepCallback(Callback):
 @patch('graphnet.models.task.reconstruction.Task.forward', Task_forward)
 def build_model_simplex(
     config, 
-    state_dict_path,
+    state_dict_path=None,
     add_vertices=False
 ):
-    base_model = load_pretrained_model(
-        config, 
-        str(state_dict_path)
-    )
+    base_model = None
+    if state_dict_path is not None:
+        base_model = load_pretrained_model(
+            config, 
+            str(state_dict_path)
+        )
     train_dataloader, validate_dataloader = make_dataloaders(config=config)
     
     def build_model_wrapper(n_output, fix_points, **architecture_kwargs):
@@ -1672,8 +1720,8 @@ def build_model_simplex(
         architecture=build_model_wrapper, 
         n_verts=config['simplex']['n_verts'], 
         LMBD=config['simplex']['LMBD'], 
-        base_model=base_model, 
         nsample=config['simplex']['nsample'],
+        base_model=base_model, 
         optimizer_class=config['optimizer_class'],
         optimizer_kwargs=config["optimizer_kwargs"],
         scheduler_class=PiecewiceFactorsLRScheduler,
@@ -1682,6 +1730,7 @@ def build_model_simplex(
             "interval": "step",
         },
         simplex_volume_loss_enabled=False,
+        infrerence_sampling_average=config['simplex']['infrerence_sampling_average'],
     )
 
     # If building for inference, add vertices
