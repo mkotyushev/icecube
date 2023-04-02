@@ -12,6 +12,7 @@ from icecube_utils import (
     inference, 
     convert_to_3d,
     calculate_angular_error,
+    inference_simplex,
     load_pretrained_model
 )
 from train_large import config as base_config
@@ -67,9 +68,12 @@ def main(args):
                     (int(x * args.size_multiplier), int(y * args.size_multiplier)) 
                     for x, y in [(128, 256), (336, 256), (336, 256), (336, 256)]
                 ]
+            infrence_fn = inference
             if model_name == 'simplex' and state_dict_path is not None:
-                config['train_mode'] = 'simplex'
+                config['train_mode'] = 'simplex_inference'
                 config['simplex']['nsample'] = 20
+                config['simplex']['infrerence_sampling_average'] = 'direction'
+                infrence_fn = inference_simplex
 
             config['batch_size'] = 512
 
@@ -81,7 +85,7 @@ def main(args):
 
             results[model_name] = calculate_angular_error(
                 convert_to_3d(
-                    inference(
+                    infrence_fn(
                         model.cuda(), 
                         config,
                         True
