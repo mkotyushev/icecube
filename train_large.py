@@ -182,6 +182,7 @@ if __name__ == '__main__':
     args = parse_args()
     seed_everything(args.seed)
 
+    config['train_mode'] = args.train_mode
     config['batch_size'] = args.batch_size
     config['accumulate_grad_batches'] = args.accumulate_grad_batches
     config['dynedge']['dynedge_layer_sizes'] = [
