@@ -54,6 +54,8 @@ def main(args):
         'simplex': args.simplex_model_state_dict_path,
     }
 
+    base_config['dataset_type'] = 'sqlite'
+
     for model_name, state_dict_path in model_name_to_state_dict_paths.items():
         print(f'Running {model_name} model')
         if Path(f'results/{model_name}.h5').exists():
