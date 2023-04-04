@@ -209,7 +209,7 @@ if __name__ == '__main__':
                 [
                     filepath
                     for filepath in config['parallel_parquet']['train_path'].glob('**/*.parquet')
-                    if int(filepath.stem.split('_')[1]) < 20
+                    if int(filepath.stem.split('_')[1]) < 132
                 ]
             )
             config['fit']['val_check_interval'] = 1

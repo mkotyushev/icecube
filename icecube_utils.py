@@ -1760,14 +1760,14 @@ def train_dynedge_simplex(
             config, 
             state_dict_path
         )
-    start_simplex_steps = 0
+    start_simplex_steps = 100
     simplex_model_wrapper = train_dynedge(
         simplex_model_wrapper,
         config,
         train_dataloader, 
         validate_dataloader,
         callbacks=[
-            EnableSimplexVolumeLossCallback(start_simplex_steps, reset_on_fit_start=False),
+            EnableSimplexVolumeLossCallback(start_simplex_steps, reset_on_fit_start=True),
             EarlyStoppingTrainStepCallback(
                 monitor='volume_loss',
                 start_step=start_simplex_steps + 1,
