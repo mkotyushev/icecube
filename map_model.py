@@ -1,8 +1,11 @@
+import sys
 import torch
 from collections import OrderedDict
 from pathlib import Path
 from copy import deepcopy
 from graphnet.data.constants import FEATURES, TRUTH
+from graphnet.data.parquet.parquet_dataset import ParquetDataset
+from graphnet.data.sqlite.sqlite_dataset import SQLiteDataset
 from icecube_utils import make_dataloader
 
 from icecube_utils import (
@@ -50,12 +53,35 @@ def get_args():
     parser.add_argument('mapped_model_save_dir', type=Path)
     args = parser.parse_args()
 
+    args.model_name = 'mlpnet'
+    args.n_epochs = 10
+    args.save_result_file = 'sample.csv'
+    args.sweep_name = 'exp_sample'
+    args.exact = True
+    args.correction = True
+    args.ground_metric = 'euclidean'
+    args.weight_stats = True
+    args.activation_histograms = True
+    args.activation_mode = 'raw'
+    args.geom_ensemble_type = 'acts'
+    args.sweep_id = 21
+    args.ground_metric_normalize = 'none'
+    args.activation_seed = 21
+    args.prelu_acts = True
+    args.recheck_acc = True
+    args.load_models = './mnist_models'
+    args.ckpt_type = 'final'
+    args.past_correction = True
+    args.not_squared = True
+    args.dist_normalize = True
+    args.print_distances = True
+    args.to_download = True
+
     args.gpu_id = 0
     args.proper_marginals = True
     args.skip_last_layer = False
     args.skip_personal_idx = False
     args.act_num_samples = 512
-    # args.act_num_samples = 200
     args.width_ratio = 1
     args.dataset = 'icecube'
     args.disable_bias = False
@@ -562,6 +588,8 @@ def map_model(args, model_from, model_to, dataloader, n_samples, size_multiplier
 def main(args):
     models = {}
 
+    config['dataset_type'] = 'sqlite'
+
     config_from = deepcopy(config)
     config_from['dynedge']['dynedge_layer_sizes'] = [(128, 256), (336, 256), (336, 256), (336, 256)]
 
@@ -576,25 +604,10 @@ def main(args):
         for x, y in [(128, 256), (336, 256), (336, 256), (336, 256)]
     ]
 
-    models['to'] = load_pretrained_model(
+    models['to'], train_dataloader = load_pretrained_model(
         config=config_to, 
-        path=str(args.to_model_state_dict_path)
-    )
-
-    # Map from model to to model
-    train_dataloader = make_dataloader(db=config_from['path'],
-        selection=None, # Entire database
-        pulsemaps=config_from['pulsemap'],
-        features=features,
-        truth=truth,
-        batch_size=args.act_num_samples,
-        num_workers=config_from['num_workers'],
-        shuffle=False,
-        labels={'direction': Direction()},
-        index_column=config_from['index_column'],
-        truth_table=config_from['truth_table'],
-        max_n_pulses = config['max_n_pulses']['max_n_pulses'],
-        max_n_pulses_strategy='clamp',
+        path=str(args.to_model_state_dict_path),
+        return_train_dataloader=True
     )
 
     models['mapped'] = map_model(

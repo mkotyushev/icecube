@@ -537,29 +537,13 @@ def inference(model, config: Dict[str, Any], use_labels: bool) -> pd.DataFrame:
     if use_labels:
         labels = {'direction': Direction(azimuth_key=config['truth'][1], zenith_key=config['truth'][0])}
     """Applies model to the database specified in config['inference_database_path'] and saves results to disk."""
-    # Make Dataloader
-    test_dataloader = make_dataloader(
-        db = config['inference_database_path'],
-        selection = None, # Entire database
-        pulsemaps = config['pulsemap'],
-        features = config['features'],
-        truth = config['truth'],
-        batch_size = config['batch_size'],
-        num_workers = config['num_workers'],
-        shuffle = False,
-        labels = labels,
-        index_column = config['index_column'],
-        truth_table = config['truth_table'],
-        max_n_pulses = config['max_n_pulses']['max_n_pulses'],
-        max_n_pulses_strategy='clamp',
-        transforms = config['val_transforms'],
-    )
+    _, validate_dataloader = make_dataloaders(config=config)
     
     # Get predictions
     with torch.no_grad():
         results = model.predict_as_dataframe(
             gpus = [0],
-            dataloader = test_dataloader,
+            dataloader = validate_dataloader,
             prediction_columns=model.prediction_columns,
             additional_attributes=model.additional_attributes,
             distribution_strategy='auto'

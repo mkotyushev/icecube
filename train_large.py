@@ -210,6 +210,9 @@ if __name__ == '__main__':
         # originally was 0.5 on 10% of data, for parallel_parquet div by 10
         config['parallel_parquet']['warmup_epochs'] = 0.05
 
+    config['fit']['gradient_clip_val'] = 100 * args.size_multiplier ** 2
+    config['fit']['gradient_clip_algorithm'] = 'norm'
+
     # Set LR schedule
     if args.lr_schedule_type == 'linear':
         config['scheduler_kwargs']['pieces'] = [
