@@ -1562,7 +1562,7 @@ class SimplexNetGraphnet(Model):
     ) -> None:
         """Fit `Model` using `pytorch_lightning.Trainer`."""
         self.train(mode=True)
-        for vertex_index in range(1, self.n_verts + 1):
+        for vertex_index in range(2, self.n_verts + 1):
             self.add_vert(vertex_index)
             self.simplex_model = self.simplex_model.cuda()
             super().fit(
@@ -1760,6 +1760,10 @@ def train_dynedge_simplex(
             config, 
             state_dict_path
         )
+    simplex_model_wrapper(1)
+    simplex_model_wrapper.load_state_dict(
+        torch.load('weights/rerun_small_full_no_aug_simplex/epoch=0-step=51172-v2.ckpt')['state_dict']
+    )
     start_simplex_steps = 100
     simplex_model_wrapper = train_dynedge(
         simplex_model_wrapper,
@@ -1768,13 +1772,13 @@ def train_dynedge_simplex(
         validate_dataloader,
         callbacks=[
             EnableSimplexVolumeLossCallback(start_simplex_steps, reset_on_fit_start=True),
-            EarlyStoppingTrainStepCallback(
-                monitor='volume_loss',
-                start_step=start_simplex_steps + 1,
-                mode='min',
-                min_delta=1e-10,
-                patience=500,
-            )
+            # EarlyStoppingTrainStepCallback(
+            #     monitor='volume_loss',
+            #     start_step=start_simplex_steps + 1,
+            #     mode='min',
+            #     min_delta=1e-10,
+            #     patience=500,
+            # )
         ]
     )
     return simplex_model_wrapper
