@@ -1760,7 +1760,7 @@ def train_dynedge_simplex(
             config, 
             state_dict_path
         )
-    simplex_model_wrapper(1)
+    simplex_model_wrapper.add_vert(1)
     simplex_model_wrapper.load_state_dict(
         torch.load('weights/rerun_small_full_no_aug_simplex/epoch=0-step=51172-v2.ckpt')['state_dict']
     )
