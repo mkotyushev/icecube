@@ -138,8 +138,6 @@ def build_model(
         nb_inputs=detector.nb_outputs,
         global_pooling_schemes=["min", "max", "mean"],
         fix_points=fix_points,
-        bias=config['bias'],
-        use_bn=config['use_bn'],
         **config['dynedge']
     )
 
@@ -150,7 +148,7 @@ def build_model(
             target_labels=config["target"],
             loss_function=VonMisesFisher3DLoss(),
             loss_weight='loss_weight' if config['loss_weight'] else None,
-            bias=config['bias'],
+            bias=config['dynedge']['bias'],
             fix_points=fix_points,
         )
         tasks.append(task)
@@ -165,7 +163,7 @@ def build_model(
             target_labels=config['truth'][0],
             loss_function=VonMisesFisher2DLoss(),
             loss_weight='loss_weight' if config['loss_weight'] else None,
-            bias=config['bias'],
+            bias=config['dynedge']['bias'],
             fix_points=fix_points,
         )
         tasks.append(task)
@@ -174,7 +172,7 @@ def build_model(
             target_labels=config['truth'][1],
             loss_function=VonMisesFisher2DLoss(),
             loss_weight='loss_weight' if config['loss_weight'] else None,
-            bias=config['bias'],
+            bias=config['dynedge']['bias'],
             fix_points=fix_points,
         )
         tasks.append(task)
@@ -189,7 +187,7 @@ def build_model(
             target_labels=config['truth'],
             loss_function=CosineLoss(),
             loss_weight='loss_weight' if config['loss_weight'] else None,
-            bias=config['bias'],
+            bias=config['dynedge']['bias'],
             fix_points=fix_points,
         )
         tasks.append(task)
@@ -202,7 +200,7 @@ def build_model(
     #         target_labels=truth,
     #         loss_function=CosineLoss(),
     #         loss_weight='loss_weight' if config['loss_weight'] else None,
-    #         bias=config['bias'],
+    #         bias=config['dynedge']['bias'],
     #         fix_points=fix_points,
     #     )
     #     tasks.append(task)
@@ -216,7 +214,7 @@ def build_model(
             target_labels=config['truth'][0],
             loss_function=VonMisesFisher2DLossSinCos(),
             loss_weight='loss_weight' if config['loss_weight'] else None,
-            bias=config['bias'],
+            bias=config['dynedge']['bias'],
             fix_points=fix_points,
         )
         tasks.append(task)
@@ -226,7 +224,7 @@ def build_model(
             target_labels=config['truth'][1],
             loss_function=VonMisesFisher2DLossSinCos(),
             loss_weight='loss_weight' if config['loss_weight'] else None,
-            bias=config['bias'],
+            bias=config['dynedge']['bias'],
             fix_points=fix_points,
         )
         tasks.append(task)
@@ -246,7 +244,7 @@ def build_model(
             target_labels=config['truth'][0],
             loss_function=EuclidianDistanceLossSinCos(),
             loss_weight='loss_weight' if config['loss_weight'] else None,
-            bias=config['bias'],
+            bias=config['dynedge']['bias'],
             fix_points=fix_points,
         )
         tasks.append(task)
@@ -256,7 +254,7 @@ def build_model(
             target_labels=config['truth'][1],
             loss_function=EuclidianDistanceLossSinCos(),
             loss_weight='loss_weight' if config['loss_weight'] else None,
-            bias=config['bias'],
+            bias=config['dynedge']['bias'],
             fix_points=fix_points,
         )
         tasks.append(task)
@@ -274,7 +272,7 @@ def build_model(
             target_labels=config['truth'][0],
             loss_function=EuclidianDistanceLossSinCos(),
             loss_weight='loss_weight' if config['loss_weight'] else None,
-            bias=config['bias'],
+            bias=config['dynedge']['bias'],
             fix_points=fix_points,
         )
         tasks.append(task)
@@ -291,7 +289,7 @@ def build_model(
             target_labels=config['truth'][0],
             loss_function=EuclidianDistanceLossCos(),
             loss_weight='loss_weight' if config['loss_weight'] else None,
-            bias=config['bias'],
+            bias=config['dynedge']['bias'],
             fix_points=fix_points,
         )
         tasks.append(task)
@@ -305,7 +303,7 @@ def build_model(
             target_labels=config['truth'][0],
             loss_function=VonMisesFisher2DLoss(),
             loss_weight='loss_weight' if config['loss_weight'] else None,
-            bias=config['bias'],
+            bias=config['dynedge']['bias'],
             fix_points=fix_points,
         )
         tasks.append(task)
@@ -318,7 +316,7 @@ def build_model(
             target_labels=config['truth'][1],
             loss_function=VonMisesFisher2DLoss(),
             loss_weight='loss_weight' if config['loss_weight'] else None,
-            bias=config['bias'],
+            bias=config['dynedge']['bias'],
             fix_points=fix_points,
         )
         tasks.append(task)
@@ -331,7 +329,7 @@ def build_model(
             target_labels=config['truth'],
             loss_function=CosineLoss3D(),
             loss_weight='loss_weight' if config['loss_weight'] else None,
-            bias=config['bias'],
+            bias=config['dynedge']['bias'],
             fix_points=fix_points,
         )
         tasks.append(task)
@@ -1769,6 +1767,13 @@ def train_dynedge_simplex(
         validate_dataloader,
         callbacks=[
             EnableSimplexVolumeLossCallback(start_simplex_steps, reset_on_fit_start=True),
+            EarlyStoppingTrainStepCallback(
+                monitor='volume_loss',
+                start_step=start_simplex_steps + 1,
+                mode='min',
+                min_delta=0.0,
+                patience=500,
+            )
         ]
     )
     return simplex_model_wrapper

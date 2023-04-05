@@ -143,7 +143,6 @@ config = {
             # "profiler": AdvancedProfiler(dirpath=".", filename="perf_logs"),
         },
         'base_dir': 'training',
-        'bias': True,
         'dynedge': {},
         # applicable only for dataset_type == 'sqlite',
         # dataset_type == 'parquet' always shuffles data
@@ -175,7 +174,11 @@ config = {
             'nsample': 5,
             'infrerence_sampling_average': 'angles'
         },
-        'use_bn': False,
+        'dynedge': {
+            'bias': True,
+            'bn': True,
+            'dropout': 0.2,
+        }
 }
 
 
