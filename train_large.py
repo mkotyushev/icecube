@@ -55,6 +55,8 @@ def parse_args():
     parser.add_argument('--lr-onecycle-factors', type=float, nargs=3, default=[1e-02, 1, 1e-02])
     parser.add_argument('--lr-schedule-type', type=str, default='linear', choices=['linear', 'exp', 'cos'])
     parser.add_argument('--train-mode', type=str, default='default', choices=['default', 'blocks', 'simplex'])
+    parser.add_argument('--bn', action='store_true')
+    parser.add_argument('--dropout', type=float, required=False, default=None)
     args = parser.parse_args()
     return args
 
@@ -194,6 +196,8 @@ if __name__ == '__main__':
         (int(x * args.size_multiplier), int(y * args.size_multiplier)) 
         for x, y in [(128, 256), (336, 256), (336, 256), (336, 256)]
     ]
+    config['dynedge']['bn'] = args.bn
+    config['dynedge']['dropout'] = args.dropout
     config['max_n_pulses']['max_n_pulses_strategy'] = args.max_n_pulses_strategy
 
     # Convert patience from epochs to validation checks
