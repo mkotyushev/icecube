@@ -264,8 +264,18 @@ def compute_activations_across_models_v1(args, models, train_loader, num_samples
 
 
 def process_activations(args, activations, layer0_name, layer1_name):
-    activations_0 = activations[0][layer0_name.replace('.weight', '').replace('.bias', '')].squeeze()
-    activations_1 = activations[1][layer1_name.replace('.weight', '').replace('.bias', '')].squeeze()
+    layer_name_0_common = layer0_name \
+        .replace('.weight', '') \
+        .replace('.bias', '') \
+        .replace('.running_mean', '') \
+        .replace('.running_var', '')
+    activations_0 = activations[0][layer_name_0_common].squeeze()
+    layer_name_1_common = layer1_name \
+        .replace('.weight', '') \
+        .replace('.bias', '') \
+        .replace('.running_mean', '') \
+        .replace('.running_var', '')
+    activations_1 = activations[1][layer_name_1_common].squeeze()
 
     # assert activations_0.shape == activations_1.shape
     _check_activation_sizes(args, activations_0, activations_1)
@@ -332,7 +342,7 @@ def get_acts_wassersteinized_layers_modularized(
         logger.info(f"Previous layer shape is {previous_layer_shape}")
         previous_layer_shape = fc_layer1_weight.shape
 
-        is_bias = 'bias' in layer0_name
+        is_bias = 'bias' in layer0_name or 'running_mean' in layer0_name or 'running_var' in layer0_name
         is_first_layer = (idx == 0) if args.disable_bias else (idx <= 1)
         is_last_layer = (idx == (num_layers - 1)) if args.disable_bias else (idx >= (num_layers - 2))
 
@@ -576,7 +586,9 @@ def map_model(args, model_from, model_to, dataloader, n_samples, size_multiplier
     }
         
     mapped_state_dict = {
-        k: v.squeeze() if 'bias' in k else v for k, v in mapped_state_dict.items()
+        k: v.squeeze() 
+        if ('bias' in k or 'running_mean' in k or 'running_var' in k) else v 
+        for k, v in mapped_state_dict.items()
     }
 
     model_mapped = deepcopy(model_to)
