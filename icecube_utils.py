@@ -38,7 +38,7 @@ from graphnet.utilities.logging import get_logger
 from torch.utils.data import DataLoader
 from pytorch_lightning import Callback
 from pytorch_lightning.loggers.logger import Logger
-from simplex.models.simplex_models import SimplexNet, Linear as SimplexLinear
+from simplex.models.simplex_models import SimplexNet, SimplexModule
 from graphnet.models.model import Model
 from pytorch_lightning.utilities import grad_norm
 from graphnet.data.sqlite import SQLiteDataset
@@ -137,8 +137,9 @@ def build_model(
     gnn = DynEdge(
         nb_inputs=detector.nb_outputs,
         global_pooling_schemes=["min", "max", "mean"],
-        bias=config['bias'],
         fix_points=fix_points,
+        bias=config['bias'],
+        use_bn=config['use_bn'],
         **config['dynedge']
     )
 
@@ -1304,7 +1305,7 @@ def EdgeConvGraphnet_message(self, x_i: Tensor, x_j: Tensor, coeffs_t: Optional[
 @rename('forward')
 def SequentialGraphnet_forward(self, input, coeffs_t):
     for module in self:
-        if isinstance(module, SimplexLinear):
+        if isinstance(module, SimplexModule):
             input = module(input, coeffs_t)
         else:
             input = module(input)

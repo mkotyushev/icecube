@@ -174,7 +174,8 @@ config = {
             'LMBD': 1e-10,
             'nsample': 5,
             'infrerence_sampling_average': 'angles'
-        }
+        },
+        'use_bn': False,
 }
 
 
