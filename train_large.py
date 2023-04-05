@@ -177,7 +177,7 @@ config = {
         'dynedge': {
             'bias': True,
             'bn': True,
-            'dropout': 0.2,
+            'dropout': None,
         }
 }
 
