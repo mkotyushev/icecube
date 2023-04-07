@@ -1,8 +1,11 @@
+import sys
 import torch
 from collections import OrderedDict
 from pathlib import Path
 from copy import deepcopy
 from graphnet.data.constants import FEATURES, TRUTH
+from graphnet.data.parquet.parquet_dataset import ParquetDataset
+from graphnet.data.sqlite.sqlite_dataset import SQLiteDataset
 from icecube_utils import make_dataloader
 
 from icecube_utils import (
@@ -50,12 +53,35 @@ def get_args():
     parser.add_argument('mapped_model_save_dir', type=Path)
     args = parser.parse_args()
 
+    args.model_name = 'mlpnet'
+    args.n_epochs = 10
+    args.save_result_file = 'sample.csv'
+    args.sweep_name = 'exp_sample'
+    args.exact = True
+    args.correction = True
+    args.ground_metric = 'euclidean'
+    args.weight_stats = True
+    args.activation_histograms = True
+    args.activation_mode = 'raw'
+    args.geom_ensemble_type = 'acts'
+    args.sweep_id = 21
+    args.ground_metric_normalize = 'none'
+    args.activation_seed = 21
+    args.prelu_acts = True
+    args.recheck_acc = True
+    args.load_models = './mnist_models'
+    args.ckpt_type = 'final'
+    args.past_correction = True
+    args.not_squared = True
+    args.dist_normalize = True
+    args.print_distances = True
+    args.to_download = True
+
     args.gpu_id = 0
     args.proper_marginals = True
     args.skip_last_layer = False
     args.skip_personal_idx = False
-    args.act_num_samples = 512
-    # args.act_num_samples = 200
+    args.act_num_samples = 256
     args.width_ratio = 1
     args.dataset = 'icecube'
     args.disable_bias = False
@@ -237,9 +263,26 @@ def compute_activations_across_models_v1(args, models, train_loader, num_samples
     return activations
 
 
-def process_activations(args, activations, layer0_name, layer1_name):
-    activations_0 = activations[0][layer0_name.replace('.weight', '').replace('.bias', '')].squeeze()
-    activations_1 = activations[1][layer1_name.replace('.weight', '').replace('.bias', '')].squeeze()
+def process_activations(args, activations, layer0_name, layer1_name, has_bn=False):
+    if has_bn:
+        # If the model has BN layers
+        # we need to use activation from BN output
+        # for all the layers in linear block: linear itself and BN
+
+        # It is assumed that each linear layer is followed by BN layer
+        layer0_name = layer0_name.replace('.linear', '.bn')
+        layer1_name = layer1_name.replace('.linear', '.bn')
+
+    # Bias and weights use same activations
+    layer0_name = layer0_name \
+        .replace('.weight', '') \
+        .replace('.bias', '')
+    layer1_name = layer1_name \
+        .replace('.weight', '') \
+        .replace('.bias', '')
+
+    activations_0 = activations[0][layer0_name].squeeze()
+    activations_1 = activations[1][layer1_name].squeeze()
 
     # assert activations_0.shape == activations_1.shape
     _check_activation_sizes(args, activations_0, activations_1)
@@ -268,7 +311,8 @@ def get_acts_wassersteinized_layers_modularized(
     activations, 
     eps=1e-7, 
     test_loader=None,
-    input_dim=17
+    input_dim=17,
+    has_bn=False,
 ):
     '''
     Average based on the activation vector over data samples. Obtain the transport map,
@@ -303,10 +347,13 @@ def get_acts_wassersteinized_layers_modularized(
     while idx < num_layers:
         ((layer0_name, fc_layer0_weight), (layer1_name, fc_layer1_weight)) = networks_named_params[idx]
         logger.info("\n--------------- At layer index {} name {} ------------- \n ".format(idx, layer0_name))
-        logger.info(f"Previous layer shape is {previous_layer_shape}")
+        logger.info(f"Previous layer shape is {previous_layer_shape}, current layer shape is {fc_layer0_weight.shape}")
         previous_layer_shape = fc_layer1_weight.shape
 
-        is_bias = 'bias' in layer0_name
+        # BN affine params are handled the same way as bias
+        is_bias = \
+            ('bn.weight' in layer0_name or 'bn.bias' in layer0_name) or \
+            'bias' in layer0_name
         is_first_layer = (idx == 0) if args.disable_bias else (idx <= 1)
         is_last_layer = (idx == (num_layers - 1)) if args.disable_bias else (idx >= (num_layers - 2))
 
@@ -314,7 +361,7 @@ def get_acts_wassersteinized_layers_modularized(
         if is_bias:
             incoming_layer_aligned = True
 
-        activations_0, activations_1 = process_activations(args, activations, layer0_name, layer1_name)
+        activations_0, activations_1 = process_activations(args, activations, layer0_name, layer1_name, has_bn=has_bn)
 
         assert activations_0.shape[0] == fc_layer0_weight.shape[0], \
             f'activations_0.shape[0] {activations_0.shape[0]} fc_layer0_weight.shape[0] {fc_layer0_weight.shape[0]}'
@@ -358,12 +405,21 @@ def get_acts_wassersteinized_layers_modularized(
                     # Handles cat connections of DynEdgeConv readout for 3 global poolings
                     temp_T_var = [T_var, T_var, T_var]
                 else:
+                    # Inputs to postproc layer are concatenated from
+                    # input + 4 conv layers output
+
+                    # Here, T_var's of conv layers are the same for 
+                    # - linear weight 
+                    # - linear bias (if present)
+                    # - bn weight (if present)
+                    # - bn bias (if present)
+                    # So we use T_var's of linear weight
                     postproc_T_vars = [
                         torch.eye(input_dim).cuda(),
-                        T_vars['_gnn._conv_layers.0.nn.2.weight'],
-                        T_vars['_gnn._conv_layers.1.nn.2.weight'],
-                        T_vars['_gnn._conv_layers.2.nn.2.weight'],
-                        T_vars['_gnn._conv_layers.3.nn.2.weight']
+                        T_vars['_gnn._conv_layers.0.nn.1.linear.weight'],
+                        T_vars['_gnn._conv_layers.1.nn.1.linear.weight'],
+                        T_vars['_gnn._conv_layers.2.nn.1.linear.weight'],
+                        T_vars['_gnn._conv_layers.3.nn.1.linear.weight']
                     ]
 
                     if fc_layer0_weight_data.shape[1] == sum(x.shape[0] for x in postproc_T_vars):
@@ -373,8 +429,9 @@ def get_acts_wassersteinized_layers_modularized(
                     else:
                         raise ValueError(
                             f'size mismatch for DynEdge: '
-                            f'fc_layer0_weight_data.shape == {fc_layer0_weight_data.shape},'
-                            f' T_var.shape == {T_var.shape}'
+                            f'fc_layer0_weight_data.shape == {fc_layer0_weight_data.shape}, '
+                            f'T_var.shape == {T_var.shape}, '
+                            f'sum(x.shape[0] for x in postproc_T_vars) == {sum(x.shape[0] for x in postproc_T_vars)}'
                         )
                 temp_T_var = torch.block_diag(*temp_T_var)
                 aligned_wt = torch.matmul(fc_layer0_weight_data, temp_T_var)
@@ -510,23 +567,31 @@ def get_acts_wassersteinized_layers_modularized(
     return avg_aligned_layers, aligned_layers, T_vars
 
 
-layer_names = {
-    '_gnn._conv_layers.0.nn.0',
-    '_gnn._conv_layers.0.nn.2',
-    '_gnn._conv_layers.1.nn.0',
-    '_gnn._conv_layers.1.nn.2',
-    '_gnn._conv_layers.2.nn.0',
-    '_gnn._conv_layers.2.nn.2',
-    '_gnn._conv_layers.3.nn.0',
-    '_gnn._conv_layers.3.nn.2',
-    '_gnn._post_processing.0',
-    '_gnn._post_processing.2',
-    '_gnn._readout.0',
-    '_tasks.0._affine',
-}
-
-
 def map_model(args, model_from, model_to, dataloader, n_samples, size_multiplier):
+    has_bn = False
+    for name, _ in model_from.named_parameters():
+        if 'bn' in name:
+            has_bn = True
+            break
+    if has_bn:
+        # If BN are used, we need to compute the activations of the model
+        # after the BN layers.
+        
+        # Also: no BN for last layer, so for it activations are computed
+        # after linear layers
+        layer_names = {
+            name.replace('.bias', '') 
+            for name, _ in model_from.named_parameters()
+            if '.bn.bias' in name or '_affine.bias' in name
+        }
+    else:
+        # If no BN are used, we can compute the activations of the model
+        # after linear layers
+        layer_names = {
+            name.replace('.bias', '') 
+            for name, _ in model_from.named_parameters()
+            if '.bias' in name
+        }
     models = [
         model_from.cuda(),
         model_to.cuda(), 
@@ -541,7 +606,7 @@ def map_model(args, model_from, model_to, dataloader, n_samples, size_multiplier
             layer_names=layer_names
         )
         _, mapped_state_dict, _ = get_acts_wassersteinized_layers_modularized(
-            args, models, activations, test_loader=None)
+            args, models, activations, test_loader=None, has_bn=has_bn)
 
     # TODO fix scaling
     mapped_state_dict = {
@@ -550,17 +615,24 @@ def map_model(args, model_from, model_to, dataloader, n_samples, size_multiplier
     }
         
     mapped_state_dict = {
-        k: v.squeeze() if 'bias' in k else v for k, v in mapped_state_dict.items()
+        k: v.squeeze() 
+        for k, v in mapped_state_dict.items()
     }
 
     model_mapped = deepcopy(model_to)
-    model_mapped.load_state_dict(mapped_state_dict)
+    # TODO: map running_mean and running_var of BN layers 
+    # together with weights and biases. Now they are not mapped 
+    # because not present in .named_parameters().
+    model_mapped.load_state_dict(mapped_state_dict, strict=False)
 
     return model_mapped
 
 
 def main(args):
     models = {}
+
+    config['dataset_type'] = 'sqlite'
+    config['train_mode'] = 'default'
 
     config_from = deepcopy(config)
     config_from['dynedge']['dynedge_layer_sizes'] = [(128, 256), (336, 256), (336, 256), (336, 256)]
@@ -576,25 +648,10 @@ def main(args):
         for x, y in [(128, 256), (336, 256), (336, 256), (336, 256)]
     ]
 
-    models['to'] = load_pretrained_model(
+    models['to'], train_dataloader = load_pretrained_model(
         config=config_to, 
-        path=str(args.to_model_state_dict_path)
-    )
-
-    # Map from model to to model
-    train_dataloader = make_dataloader(db=config_from['path'],
-        selection=None, # Entire database
-        pulsemaps=config_from['pulsemap'],
-        features=features,
-        truth=truth,
-        batch_size=args.act_num_samples,
-        num_workers=config_from['num_workers'],
-        shuffle=False,
-        labels={'direction': Direction()},
-        index_column=config_from['index_column'],
-        truth_table=config_from['truth_table'],
-        max_n_pulses = config['max_n_pulses']['max_n_pulses'],
-        max_n_pulses_strategy='clamp',
+        path=str(args.to_model_state_dict_path),
+        return_train_dataloader=True
     )
 
     models['mapped'] = map_model(

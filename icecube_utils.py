@@ -1,26 +1,31 @@
 
 import gc
 from pathlib import Path
-import math
 import numpy as np
-import pandas as pd
 import os
 import torch
-from copy import deepcopy
+import pandas as pd
+import gc, os
+import numpy as np
 from mock import patch
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Union, Optional
 from pytorch_lightning.callbacks import (
     EarlyStopping, 
     GradientAccumulationScheduler,
     ModelCheckpoint,
     LearningRateMonitor
 )
-from torch.optim.adamw import AdamW
+from torch.optim import Adam
 from torch.optim.lr_scheduler import LRScheduler
 from torch.nn import Module, Linear, ModuleList
 from torch import Tensor
+from torch_geometric.data import Data
+from torch_geometric.nn.pool import knn_graph
+from torch_geometric.typing import Adj, PairTensor
+from torch_geometric.nn import EdgeConv
 from graphnet.data.constants import FEATURES, TRUTH
 from graphnet.models import StandardModel
+from graphnet.models.components.layers import DynEdgeConv
 from graphnet.models.detector.icecube import IceCubeKaggle
 from graphnet.models.gnn import DynEdge
 from graphnet.models.graph_builders import KNNGraphBuilder
@@ -30,6 +35,14 @@ from graphnet.training.loss_functions import CosineLoss, CosineLoss3D, Euclidian
 from graphnet.training.labels import Direction
 from graphnet.training.utils import make_dataloader
 from graphnet.utilities.logging import get_logger
+from torch.utils.data import DataLoader
+from pytorch_lightning import Callback
+from pytorch_lightning.loggers.logger import Logger
+from simplex.models.simplex_models import SimplexNet, SimplexModule
+from graphnet.models.model import Model
+from pytorch_lightning.utilities import grad_norm
+from graphnet.data.sqlite import SQLiteDataset
+from graphnet.data.parquet import ParquetDataset, ParallelParquetTrainDataset
 
 
 # Constants
@@ -124,7 +137,6 @@ def build_model(
     gnn = DynEdge(
         nb_inputs=detector.nb_outputs,
         global_pooling_schemes=["min", "max", "mean"],
-        bias=config['bias'],
         fix_points=fix_points,
         **config['dynedge']
     )
@@ -135,8 +147,8 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config["target"],
             loss_function=VonMisesFisher3DLoss(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
-            bias=config['bias'],
+            loss_weight='loss_weight' if config['loss_weight'] else None,
+            bias=config['dynedge']['bias'],
             fix_points=fix_points,
         )
         tasks.append(task)
@@ -150,8 +162,8 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][0],
             loss_function=VonMisesFisher2DLoss(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
-            bias=config['bias'],
+            loss_weight='loss_weight' if config['loss_weight'] else None,
+            bias=config['dynedge']['bias'],
             fix_points=fix_points,
         )
         tasks.append(task)
@@ -159,8 +171,8 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][1],
             loss_function=VonMisesFisher2DLoss(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
-            bias=config['bias'],
+            loss_weight='loss_weight' if config['loss_weight'] else None,
+            bias=config['dynedge']['bias'],
             fix_points=fix_points,
         )
         tasks.append(task)
@@ -174,8 +186,8 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'],
             loss_function=CosineLoss(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
-            bias=config['bias'],
+            loss_weight='loss_weight' if config['loss_weight'] else None,
+            bias=config['dynedge']['bias'],
             fix_points=fix_points,
         )
         tasks.append(task)
@@ -187,8 +199,8 @@ def build_model(
     #         hidden_size=gnn.nb_outputs,
     #         target_labels=truth,
     #         loss_function=CosineLoss(),
-    #         loss_weight='loss_weight' if 'loss_weight' in config else None,
-    #         bias=config['bias'],
+    #         loss_weight='loss_weight' if config['loss_weight'] else None,
+    #         bias=config['dynedge']['bias'],
     #         fix_points=fix_points,
     #     )
     #     tasks.append(task)
@@ -201,8 +213,8 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][0],
             loss_function=VonMisesFisher2DLossSinCos(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
-            bias=config['bias'],
+            loss_weight='loss_weight' if config['loss_weight'] else None,
+            bias=config['dynedge']['bias'],
             fix_points=fix_points,
         )
         tasks.append(task)
@@ -211,8 +223,8 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][1],
             loss_function=VonMisesFisher2DLossSinCos(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
-            bias=config['bias'],
+            loss_weight='loss_weight' if config['loss_weight'] else None,
+            bias=config['dynedge']['bias'],
             fix_points=fix_points,
         )
         tasks.append(task)
@@ -231,8 +243,8 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][0],
             loss_function=EuclidianDistanceLossSinCos(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
-            bias=config['bias'],
+            loss_weight='loss_weight' if config['loss_weight'] else None,
+            bias=config['dynedge']['bias'],
             fix_points=fix_points,
         )
         tasks.append(task)
@@ -241,8 +253,8 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][1],
             loss_function=EuclidianDistanceLossSinCos(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
-            bias=config['bias'],
+            loss_weight='loss_weight' if config['loss_weight'] else None,
+            bias=config['dynedge']['bias'],
             fix_points=fix_points,
         )
         tasks.append(task)
@@ -259,8 +271,8 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][0],
             loss_function=EuclidianDistanceLossSinCos(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
-            bias=config['bias'],
+            loss_weight='loss_weight' if config['loss_weight'] else None,
+            bias=config['dynedge']['bias'],
             fix_points=fix_points,
         )
         tasks.append(task)
@@ -276,8 +288,8 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][0],
             loss_function=EuclidianDistanceLossCos(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
-            bias=config['bias'],
+            loss_weight='loss_weight' if config['loss_weight'] else None,
+            bias=config['dynedge']['bias'],
             fix_points=fix_points,
         )
         tasks.append(task)
@@ -290,8 +302,8 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][0],
             loss_function=VonMisesFisher2DLoss(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
-            bias=config['bias'],
+            loss_weight='loss_weight' if config['loss_weight'] else None,
+            bias=config['dynedge']['bias'],
             fix_points=fix_points,
         )
         tasks.append(task)
@@ -303,8 +315,8 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'][1],
             loss_function=VonMisesFisher2DLoss(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
-            bias=config['bias'],
+            loss_weight='loss_weight' if config['loss_weight'] else None,
+            bias=config['dynedge']['bias'],
             fix_points=fix_points,
         )
         tasks.append(task)
@@ -316,8 +328,8 @@ def build_model(
             hidden_size=gnn.nb_outputs,
             target_labels=config['truth'],
             loss_function=CosineLoss3D(),
-            loss_weight='loss_weight' if 'loss_weight' in config else None,
-            bias=config['bias'],
+            loss_weight='loss_weight' if config['loss_weight'] else None,
+            bias=config['dynedge']['bias'],
             fix_points=fix_points,
         )
         tasks.append(task)
@@ -336,12 +348,28 @@ def build_model(
     # constructed here
     assert len(config["scheduler_kwargs"]["pieces"]) == 2, \
         "Only 2 pieces one-cycle LR is supported for now"
+
+    if config['dataset_type'] == 'parallel_parquet':
+        # There is only one epoch for that dataset type,
+        # but consisting data of all epochs
+        assert config['fit']['max_epochs'] == 1
+        single_epoch_steps = \
+            len(train_dataloader) // \
+            config['parallel_parquet']['actual_max_epochs']
+        max_epochs = config['parallel_parquet']['actual_max_epochs']
+        warmup_epochs = config['parallel_parquet']['warmup_epochs']
+    else:
+        # Usial case
+        single_epoch_steps = len(train_dataloader)
+        max_epochs = config['fit']['max_epochs']
+        warmup_epochs = 0.5
+    
     scheduler_kwargs = {
         # 0.5 epoch warmup piece + rest piece
         "milestones": [
             0,
-            len(train_dataloader) / 2,
-            len(train_dataloader) * config["fit"]["max_epochs"],
+            single_epoch_steps * warmup_epochs,
+            single_epoch_steps * max_epochs,
         ],
         "pieces": config["scheduler_kwargs"]["pieces"],
     }
@@ -351,7 +379,7 @@ def build_model(
         gnn=gnn,
         tasks=tasks,
         tasks_weiths=config["tasks_weights"] if "tasks_weights" in config else None,
-        optimizer_class=AdamW,
+        optimizer_class=config['optimizer_class'],
         optimizer_kwargs=config["optimizer_kwargs"],
         scheduler_class=PiecewiceFactorsLRScheduler,
         scheduler_kwargs=scheduler_kwargs,
@@ -375,8 +403,15 @@ def load_pretrained_model(
         logger.info(f'Loading model from {path}')
         model = StandardModel.load(path)
     else:
-        model = build_model(config = config, 
-                            train_dataloader = train_dataloader)
+        if config['train_mode'] == 'simplex_inference':
+            model, _, _ = build_model_simplex(
+                config=config, 
+                state_dict_path=None,
+                add_vertices=True
+            )
+        else:
+            model = build_model(config = config, 
+                                train_dataloader = train_dataloader)
         #model._inference_trainer = Trainer(config['fit'])
         logger.info(f'Current model state dict keys: {model.state_dict().keys()}')
 
@@ -408,8 +443,23 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
     if 'loss_weight' in config:
         loss_weight_kwargs = config['loss_weight']
 
+    dataset_kwargs = dict()
+    if config['dataset_type'] == 'sqlite':
+        dataset_class = SQLiteDataset
+    elif config['dataset_type'] == 'parquet':
+        dataset_class = ParquetDataset
+    elif config['dataset_type'] == 'parallel_parquet':
+        dataset_class = ParallelParquetTrainDataset
+        dataset_kwargs = dict(
+            geometry_path=config['parallel_parquet']['geometry_path'],
+            meta_path=config['parallel_parquet']['meta_path'],
+            filepathes=config['parallel_parquet']['filepathes'],
+        )
+    else:
+        raise ValueError(f'Unknown dataset type {config["dataset_type"]}')
+
     train_dataloader = make_dataloader(
-        dataset_class = config['dataset_class'],
+        dataset_class = dataset_class,
         db = config['path'],
         selection = None,
         pulsemaps = config['pulsemap'],
@@ -417,17 +467,18 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
         truth = config['truth'],
         batch_size = config['batch_size'],
         num_workers = config['num_workers'],
-        shuffle = config['shuffle_train'],
+        shuffle = False,
         labels = {'direction': Direction(azimuth_key=config['truth'][1], zenith_key=config['truth'][0])},
         index_column = config['index_column'],
         truth_table = config['truth_table'],
         transforms = config['train_transforms'],
         **loss_weight_kwargs,
-        **max_n_pulses_kwargs
+        **max_n_pulses_kwargs,
+        **dataset_kwargs
     )
     
     validate_dataloader = make_dataloader(
-        dataset_class = config['dataset_class'],
+        dataset_class = SQLiteDataset,
         db = config['inference_database_path'],
         selection = None,
         pulsemaps = config['pulsemap'],
@@ -446,12 +497,18 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
     return train_dataloader, validate_dataloader
 
 
-def train_dynedge(model, config, train_dataloader, validate_dataloader):
+def train_dynedge(
+    model, 
+    config, 
+    train_dataloader, 
+    validate_dataloader, 
+    callbacks: Optional[List[Callback]] = None
+):
     # Compile model
     torch.compile(model)
 
     # Training model
-    callbacks = [
+    default_callbacks = [
         LearningRateMonitor(logging_interval="step"),
         GradientAccumulationScheduler(
             scheduling={0: config['accumulate_grad_batches']}
@@ -462,6 +519,10 @@ def train_dynedge(model, config, train_dataloader, validate_dataloader):
         ),
         ProgressBar(),
     ]
+    if callbacks is None:
+        callbacks = default_callbacks
+    else:
+        callbacks += default_callbacks
 
     model_checkpoint_callback = ModelCheckpoint(
         dirpath='./checkpoints',
@@ -504,29 +565,13 @@ def inference(model, config: Dict[str, Any], use_labels: bool) -> pd.DataFrame:
     if use_labels:
         labels = {'direction': Direction(azimuth_key=config['truth'][1], zenith_key=config['truth'][0])}
     """Applies model to the database specified in config['inference_database_path'] and saves results to disk."""
-    # Make Dataloader
-    test_dataloader = make_dataloader(
-        db = config['inference_database_path'],
-        selection = None, # Entire database
-        pulsemaps = config['pulsemap'],
-        features = config['features'],
-        truth = config['truth'],
-        batch_size = config['batch_size'],
-        num_workers = config['num_workers'],
-        shuffle = False,
-        labels = labels,
-        index_column = config['index_column'],
-        truth_table = config['truth_table'],
-        max_n_pulses = config['max_n_pulses']['max_n_pulses'],
-        max_n_pulses_strategy='clamp',
-        transforms = config['val_transforms'],
-    )
+    _, validate_dataloader = make_dataloaders(config=config)
     
     # Get predictions
     with torch.no_grad():
         results = model.predict_as_dataframe(
             gpus = [0],
-            dataloader = test_dataloader,
+            dataloader = validate_dataloader,
             prediction_columns=model.prediction_columns,
             additional_attributes=model.additional_attributes,
             distribution_strategy='auto'
@@ -1137,3 +1182,609 @@ class CancelAzimuthByPredictionTransform(Transform):
         v = rotate(v, k, -angle)
         input = np.concatenate((v, input[:, 3:]), axis=1)
         return input, target
+
+
+# Replace all the models' callstacks so they can forward coeffs_t
+# down to simplex linear layers
+
+# https://stackoverflow.com/questions/10874432/possible-to-change-function-name-in-definition
+# necessary to make torch_geometric inspection modules happy again after mocking
+def rename(newname):
+    def decorator(f):
+        f.__name__ = newname
+        return f
+    return decorator
+
+@rename('forward')
+def StandardModelGraphnet_forward(self, data: Data, coeffs_t) -> List[Union[Tensor, Data]]:
+    """Forward pass, chaining model components."""
+    if self._coarsening:
+        data = self._coarsening(data)
+    data = self._detector(data)
+    x = self._gnn(data, coeffs_t)
+    preds = [task(x, coeffs_t) for task in self._tasks]
+    return preds
+    
+
+@rename('forward')
+def DynEdgeGraphnet_forward(self, data: Data, coeffs_t) -> Tensor:
+    """Apply learnable forward pass."""
+    # Convenience variables
+    x, edge_index, batch, n_pulses = data.x, data.edge_index, data.batch, data.n_pulses
+
+    global_variables = self._calculate_global_variables(
+        x,
+        edge_index,
+        batch,
+        torch.log10(n_pulses),
+    )
+
+    # Distribute global variables out to each node
+    if not self._add_global_variables_after_pooling:
+        distribute = (
+            batch.unsqueeze(dim=1) == torch.unique(batch).unsqueeze(dim=0)
+        ).type(torch.float)
+
+        global_variables_distributed = torch.sum(
+            distribute.unsqueeze(dim=2)
+            * global_variables.unsqueeze(dim=0),
+            dim=1,
+        )
+
+        x = torch.cat((x, global_variables_distributed), dim=1)
+
+    # DynEdge-convolutions
+    skip_connections = [x]
+    for conv_layer in self._conv_layers:
+        x, edge_index = conv_layer(x, edge_index, batch, coeffs_t)
+        skip_connections.append(x)
+
+    # Skip-cat
+    x = torch.cat(skip_connections, dim=1)
+
+    # Post-processing
+    x = self._post_processing(x, coeffs_t)
+
+    # (Optional) Global pooling
+    if self._global_pooling_schemes:
+        x = self._global_pooling(x, batch=batch)
+        if self._add_global_variables_after_pooling:
+            x = torch.cat(
+                [
+                    x,
+                    global_variables,
+                ],
+                dim=1,
+            )
+
+    # Read-out
+    x = self._readout(x, coeffs_t)
+
+    return x
+
+
+@rename('forward')
+def DynEdgeConvGraphnet_forward(
+    self, x: Tensor, edge_index: Adj, batch: Optional[Tensor] = None, 
+    coeffs_t: Optional[Tensor] = None
+) -> Tensor:
+    """Forward pass."""
+    # Standard EdgeConv forward pass
+    x = super(DynEdgeConv, self).forward(x, edge_index, coeffs_t)
+
+    # Recompute adjacency
+    edge_index = knn_graph(
+        x=x[:, self.features_subset],
+        k=self.nb_neighbors,
+        batch=batch,
+    ).to(self.device)
+
+    return x, edge_index
+
+
+@rename('forward')
+def EdgeConvGraphnet_forward(
+        self, 
+        x: Union[Tensor, PairTensor], 
+        edge_index: Adj, 
+        coeffs_t: Optional[Tensor] = None
+    ) -> Tensor:
+    if isinstance(x, Tensor):
+        x: PairTensor = (x, x)
+    # propagate_type: (x: PairTensor)
+    return self.propagate(edge_index, x=x, size=None, coeffs_t=coeffs_t)
+
+
+@rename('message')
+def EdgeConvGraphnet_message(self, x_i: Tensor, x_j: Tensor, coeffs_t: Optional[Tensor] = None) -> Tensor:
+    return self.nn(torch.cat([x_i, x_j - x_i], dim=-1), coeffs_t)
+
+
+@rename('forward')
+def SequentialGraphnet_forward(self, input, coeffs_t):
+    for module in self:
+        if isinstance(module, SimplexModule):
+            input = module(input, coeffs_t)
+        else:
+            input = module(input)
+    return input
+
+
+@rename('forward')
+def Task_forward(self, x: Union[Tensor, Data], coeffs_t) -> Union[Tensor, Data]:
+    """Forward pass."""
+    self._regularisation_loss = 0  # Reset
+    x = self._affine(x, coeffs_t)
+    x = self._forward(x)
+    return self._transform_prediction(x)
+
+
+class SimplexNetGraphnet(Model):
+    def __init__(
+        self, 
+        architecture, 
+        n_verts, 
+        LMBD, 
+        nsample,
+        base_model=None, 
+        optimizer_class: type = Adam,
+        optimizer_kwargs: Optional[Dict] = None,
+        scheduler_class: Optional[type] = None,
+        scheduler_kwargs: Optional[Dict] = None,
+        scheduler_config: Optional[Dict] = None,
+        simplex_volume_loss_enabled: bool = True,
+        infrerence_sampling_average: str = 'angles'
+    ):
+        super().__init__()
+        self.save_hyperparameters(ignore=['base_model'])
+
+        with torch.no_grad():
+            self.reg_pars = []
+            for ii in range(0, n_verts + 2):
+                fix_pts = [True]*(ii + 1)
+                start_vert = len(fix_pts)
+
+                out_dim = 10
+                simplex_model = SimplexNet(out_dim, architecture, n_vert=start_vert,
+                                    fix_points=fix_pts)
+                simplex_model = simplex_model.cuda()
+                
+                log_vol = (simplex_model.total_volume() + 1e-4).log()
+                
+                self.reg_pars.append(max(float(LMBD)/log_vol, 1e-8))
+                del simplex_model
+        
+        fix_pts = [True]
+        n_vert = len(fix_pts)
+        self.simplex_model = SimplexNet(10, architecture, n_vert=n_vert,
+                           fix_points=fix_pts).cuda()
+        self.prediction_columns = self.simplex_model.net.prediction_columns
+        self.additional_attributes = self.simplex_model.net.additional_attributes
+        if base_model is not None:
+            self.simplex_model.import_base_parameters(base_model, 0)
+
+        self.n_verts = n_verts
+        self.nsample = nsample
+        self.current_vol_reg = self.reg_pars[0]
+        self.simplex_volume_loss_enabled = simplex_volume_loss_enabled
+        assert infrerence_sampling_average in ['angles', 'direction']
+        self.infrerence_sampling_average = infrerence_sampling_average
+
+        self._optimizer_class = optimizer_class
+        self._optimizer_kwargs = optimizer_kwargs or dict()
+        self._scheduler_class = scheduler_class
+        self._scheduler_kwargs = scheduler_kwargs or dict()
+        self._scheduler_config = scheduler_config or dict()
+
+    def configure_optimizers(self) -> Dict[str, Any]:
+        """Configure the model's optimizer(s)."""
+        optimizer = self._optimizer_class(
+            self.parameters(), **self._optimizer_kwargs
+        )
+        config = {
+            "optimizer": optimizer,
+        }
+        if self._scheduler_class is not None:
+            scheduler = self._scheduler_class(
+                optimizer, **self._scheduler_kwargs
+            )
+            config.update(
+                {
+                    "lr_scheduler": {
+                        "scheduler": scheduler,
+                        **self._scheduler_config,
+                    },
+                }
+            )
+        return config
+
+    def _get_batch_size(self, data: Data) -> int:
+        return torch.numel(torch.unique(data.batch))
+    
+    def load_state_dict(self, path_or_state_dict: Union[str, Dict], strict: bool = True) -> "Model":
+        """Load model state dict from `path`."""
+        if isinstance(path_or_state_dict, str):
+            state_dict = torch.load(path_or_state_dict)
+        else:
+            state_dict = path_or_state_dict
+        state_dict = {k.replace('simplex_model.', ''): v for k, v in state_dict.items()}
+        self.simplex_model.load_state_dict(state_dict, strict=strict)
+        return self
+
+    def inference(self) -> None:
+        """Activate inference mode."""
+        self.simplex_model.eval()
+        self.simplex_model.net.inference()
+
+    def train(self, mode: bool = True) -> "Model":
+        """Deactivate inference mode."""
+        super().train(mode)
+        self.simplex_model = self.simplex_model.train(mode)
+        self.simplex_model.net.train(mode)
+        return self
+
+    def shared_step(self, batch: Data, batch_idx: int) -> Tensor:
+        """Perform shared step.
+
+        Applies the forward pass and the following loss calculation, shared
+        between the training and validation step.
+        """
+        loss = None
+        for _ in range(self.nsample):
+            output = self.simplex_model(batch)
+            if loss is None:
+                loss = self.simplex_model.net.compute_loss(output, batch)
+            else:
+                loss = loss + self.simplex_model.net.compute_loss(output, batch)
+        loss = loss / self.nsample
+
+        volume_loss_pos = 0
+        if self.simplex_volume_loss_enabled:
+            vol = self.simplex_model.total_volume()
+            log_vol = (vol + 1e-4).log()
+
+            volume_loss_pos = self.current_vol_reg * log_vol
+            loss = loss - volume_loss_pos
+        return loss, -volume_loss_pos
+
+    def training_step(self, batch, batch_idx):
+        loss, volume_loss = self.shared_step(batch, batch_idx)
+        self.log(
+            "train_loss",
+            loss,
+            batch_size=self._get_batch_size(batch),
+            prog_bar=True,
+            on_epoch=True,
+            on_step=True,
+            sync_dist=True,
+        )
+        self.log(
+            "train_volume_loss",
+            volume_loss,
+            batch_size=self._get_batch_size(batch),
+            prog_bar=True,
+            on_epoch=True,
+            on_step=True,
+            sync_dist=True,
+        )
+
+        return {
+            'loss': loss,
+            'volume_loss': volume_loss,
+        }
+    
+    def validation_step(self, batch: Data, batch_idx: int) -> Tensor:
+        """Perform validation step."""
+        loss, volume_loss = self.shared_step(batch, batch_idx)
+        self.log(
+            "val_loss",
+            loss,
+            batch_size=self._get_batch_size(batch),
+            prog_bar=True,
+            on_epoch=True,
+            on_step=False,
+            sync_dist=True,
+        )
+        self.log(
+            "val_volume_loss",
+            volume_loss,
+            batch_size=self._get_batch_size(batch),
+            prog_bar=True,
+            on_epoch=True,
+            on_step=False,
+            sync_dist=True,
+        )
+        return loss
+
+    def forward(self, data: Data) -> List[Union[Tensor, Data]]:
+        """Perform forward pass."""
+        # Sample
+        output = []
+        for _ in range(self.nsample):
+            if not output:
+                for task_output in self.simplex_model(data):
+                    output.append([task_output])
+            else:
+                for i, task_output in enumerate(self.simplex_model(data)):
+                    output[i].append(task_output)
+
+        # Average over samples (in angles space)
+        for i in range(len(output)):
+            if self.infrerence_sampling_average == 'angles':
+                task_output = output[i]  # list of nsamples, each is (nbatch, 4)
+                # Normalize
+                task_output = torch.stack(task_output, dim=0)  # (nsamples, nbatch, 4)
+                x, y, z = \
+                    task_output[:, :, 0], \
+                    task_output[:, :, 1], \
+                    task_output[:, :, 2]  # each is (nsamples, nbatch)
+                norm = (x ** 2 + y ** 2 + z ** 2).sqrt()
+                x = x / norm
+                y = y / norm
+                z = z / norm
+
+                # Convert to angles & average
+                azimuth = torch.atan2(y, x).mean(dim=0)  # (nbatch)
+                zenith = torch.acos(z).mean(dim=0)  # (nbatch)
+
+                # Convert back to cartesian
+                x = torch.cos(azimuth) * torch.sin(zenith)  # (nbatch)
+                y = torch.sin(azimuth) * torch.sin(zenith)  # (nbatch)
+                z = torch.cos(zenith)  # (nbatch)
+                kappa = task_output[:, :, 3].mean(dim=0)  # (nbatch)
+
+                # Save back
+                output[i] = torch.stack([x, y, z, kappa], dim=1)
+            elif self.infrerence_sampling_average == 'direction':
+                output[i] = torch.stack(output[i], dim=0).mean(dim=0)
+
+        return output
+    
+    def add_vert(self, vertex_index: int):
+        self.current_vol_reg = self.reg_pars[vertex_index]
+        self.simplex_model.add_vert()
+
+    def fit(
+        self,
+        train_dataloader: DataLoader,
+        val_dataloader: Optional[DataLoader] = None,
+        *,
+        max_epochs: int = 10,
+        gpus: Optional[Union[List[int], int]] = None,
+        callbacks: Optional[List[Callback]] = None,
+        ckpt_path: Optional[str] = None,
+        logger: Optional[Logger] = None,
+        log_every_n_steps: int = 1,
+        gradient_clip_val: Optional[float] = None,
+        distribution_strategy: Optional[str] = "ddp",
+        **trainer_kwargs: Any,
+    ) -> None:
+        """Fit `Model` using `pytorch_lightning.Trainer`."""
+        self.train(mode=True)
+        for vertex_index in range(1, self.n_verts + 1):
+            self.add_vert(vertex_index)
+            self.simplex_model = self.simplex_model.cuda()
+            super().fit(
+                train_dataloader=train_dataloader,
+                val_dataloader=val_dataloader,
+                max_epochs=max_epochs,
+                gpus=gpus,
+                callbacks=callbacks,
+                ckpt_path=ckpt_path,
+                logger=logger,
+                log_every_n_steps=log_every_n_steps,
+                gradient_clip_val=gradient_clip_val,
+                distribution_strategy='auto',
+                **trainer_kwargs
+            )
+
+    def enable_simplex_volume_loss(self, enable: bool):
+        self.simplex_volume_loss_enabled = enable
+
+    # def on_before_optimizer_step(self, optimizer):
+    #     print(f'grad_norm: {grad_norm(self, norm_type=2)}')
+
+class EnableSimplexVolumeLossCallback(Callback):
+    def __init__(self, enable_on_step: int, reset_on_fit_start: bool = True):
+        self.enable_on_step = enable_on_step
+        self.steps = 0
+        self.reset_on_fit_start = reset_on_fit_start
+    
+    def on_train_batch_end(
+        self, trainer, pl_module, outputs, batch, batch_idx
+    ) -> None:
+        """Called when the train batch ends.
+
+        Note:
+            The value ``outputs["loss"]`` here will be the normalized value w.r.t ``accumulate_grad_batches`` of the
+            loss returned from ``training_step``.
+        """
+        if self.steps >= self.enable_on_step:
+            pl_module.enable_simplex_volume_loss(True)
+        self.steps += 1
+
+    def on_fit_start(self, trainer, pl_module) -> None:
+        if self.reset_on_fit_start:
+            pl_module.enable_simplex_volume_loss(False)
+            self.steps = 0
+
+
+class EarlyStoppingTrainStepCallback(Callback):
+    mode_dict = {"min": torch.lt, "max": torch.gt}
+
+    def __init__(self, monitor, start_step, mode='min', min_delta=0.0, patience=0):
+        self.monitor = monitor
+
+        assert start_step >= 0, f"EarlyStopping requires start_step >= 0, got {start_step}"
+        self.start_step = start_step
+
+        assert mode in self.mode_dict, f"mode {mode} is unknown!"
+        self.monitor_op = self.mode_dict[mode]
+
+        assert min_delta >= 0, f"EarlyStopping requires min_delta >= 0, got {min_delta}"
+        self.min_delta = torch.tensor(min_delta)
+        self.min_delta *= (1 if self.monitor_op == torch.gt else -1)
+
+        assert patience >= 0, f"EarlyStopping requires patience >= 0, got {patience}"
+        self.patience = patience
+
+        self.best = None
+        self.wait = 0
+        self.steps = 0
+    
+    def on_train_batch_end(
+        self, trainer, pl_module, outputs, batch, batch_idx
+    ) -> None:
+        """Called when the train batch ends.
+
+        Note:
+            The value ``outputs["loss"]`` here will be the normalized value w.r.t ``accumulate_grad_batches`` of the
+            loss returned from ``training_step``.
+        """
+        if self.steps >= self.start_step:
+            if self.best is None:
+                self.best = outputs[self.monitor]
+            else:
+                if self.monitor_op(
+                    outputs[self.monitor] - self.min_delta, 
+                    self.best
+                ):
+                    self.best = outputs[self.monitor]
+                    self.wait = 0
+                else:
+                    self.wait += 1
+                    if self.wait >= self.patience:
+                        trainer.should_stop = True
+        self.steps += 1
+
+    def on_train_epoch_start(self, trainer, pl_module) -> None:
+        self.best = None
+        self.wait = 0
+        self.steps = 0
+
+
+@patch('icecube_utils.StandardModel.forward', StandardModelGraphnet_forward)
+@patch('icecube_utils.DynEdge.forward', DynEdgeGraphnet_forward)
+@patch('graphnet.models.gnn.dynedge.DynEdgeConv.forward', DynEdgeConvGraphnet_forward)
+@patch('graphnet.models.components.layers.EdgeConv.forward', EdgeConvGraphnet_forward)
+@patch('graphnet.models.components.layers.EdgeConv.message', EdgeConvGraphnet_message)
+@patch('torch.nn.Sequential.forward', SequentialGraphnet_forward)
+@patch('graphnet.models.task.reconstruction.Task.forward', Task_forward)
+def build_model_simplex(
+    config, 
+    state_dict_path=None,
+    add_vertices=False
+):
+    base_model = None
+    if state_dict_path is not None:
+        base_model = load_pretrained_model(
+            config, 
+            str(state_dict_path)
+        )
+    train_dataloader, validate_dataloader = make_dataloaders(config=config)
+    
+    def build_model_wrapper(n_output, fix_points, **architecture_kwargs):
+        model = build_model(config, train_dataloader, fix_points)
+        return model
+
+    assert "scheduler_kwargs" in config and "pieces" in config["scheduler_kwargs"]
+    # Pytorch schedulers are parametrized on number of steps
+    # and not in percents, so scheduler_kwargs need to be
+    # constructed here
+    assert len(config["scheduler_kwargs"]["pieces"]) == 2, \
+        "Only 2 pieces one-cycle LR is supported for now"
+    if config['dataset_type'] == 'parallel_parquet':
+        # There is only one epoch for that dataset type,
+        # but consisting data of all epochs
+        assert config['fit']['max_epochs'] == 1
+        single_epoch_steps = \
+            len(train_dataloader) // \
+            config['parallel_parquet']['actual_max_epochs']
+        max_epochs = config['parallel_parquet']['actual_max_epochs']
+        warmup_epochs = config['parallel_parquet']['warmup_epochs']
+    else:
+        # Usial case
+        single_epoch_steps = len(train_dataloader)
+        max_epochs = config['fit']['max_epochs']
+        warmup_epochs = 0.5
+    
+    scheduler_kwargs = {
+        # 0.5 epoch warmup piece + rest piece
+        "milestones": [
+            0,
+            single_epoch_steps * warmup_epochs,
+            single_epoch_steps * max_epochs,
+        ],
+        "pieces": config["scheduler_kwargs"]["pieces"],
+    }
+
+    simplex_model_wrapper = SimplexNetGraphnet(
+        architecture=build_model_wrapper, 
+        n_verts=config['simplex']['n_verts'], 
+        LMBD=config['simplex']['LMBD'], 
+        nsample=config['simplex']['nsample'],
+        base_model=base_model, 
+        optimizer_class=config['optimizer_class'],
+        optimizer_kwargs=config["optimizer_kwargs"],
+        scheduler_class=PiecewiceFactorsLRScheduler,
+        scheduler_kwargs=scheduler_kwargs,
+        scheduler_config={
+            "interval": "step",
+        },
+        simplex_volume_loss_enabled=False,
+        infrerence_sampling_average=config['simplex']['infrerence_sampling_average'],
+    )
+
+    # If building for inference, add vertices
+    if add_vertices:
+        for vertex_index in range(1, simplex_model_wrapper.n_verts + 1):
+            simplex_model_wrapper.add_vert(vertex_index)
+
+    return simplex_model_wrapper, train_dataloader, validate_dataloader
+
+
+@patch('icecube_utils.StandardModel.forward', StandardModelGraphnet_forward)
+@patch('icecube_utils.DynEdge.forward', DynEdgeGraphnet_forward)
+@patch('graphnet.models.gnn.dynedge.DynEdgeConv.forward', DynEdgeConvGraphnet_forward)
+@patch('graphnet.models.components.layers.EdgeConv.forward', EdgeConvGraphnet_forward)
+@patch('graphnet.models.components.layers.EdgeConv.message', EdgeConvGraphnet_message)
+@patch('torch.nn.Sequential.forward', SequentialGraphnet_forward)
+@patch('graphnet.models.task.reconstruction.Task.forward', Task_forward)
+def train_dynedge_simplex(
+    config,
+    state_dict_path
+):
+    simplex_model_wrapper, train_dataloader, validate_dataloader = \
+        build_model_simplex(
+            config, 
+            state_dict_path
+        )
+    start_simplex_steps = 100
+    simplex_model_wrapper = train_dynedge(
+        simplex_model_wrapper,
+        config,
+        train_dataloader, 
+        validate_dataloader,
+        callbacks=[
+            EnableSimplexVolumeLossCallback(start_simplex_steps, reset_on_fit_start=True),
+            EarlyStoppingTrainStepCallback(
+                monitor='volume_loss',
+                start_step=start_simplex_steps + 1,
+                mode='min',
+                min_delta=0.0,
+                patience=500,
+            )
+        ]
+    )
+    return simplex_model_wrapper
+
+
+@patch('icecube_utils.StandardModel.forward', StandardModelGraphnet_forward)
+@patch('icecube_utils.DynEdge.forward', DynEdgeGraphnet_forward)
+@patch('graphnet.models.gnn.dynedge.DynEdgeConv.forward', DynEdgeConvGraphnet_forward)
+@patch('graphnet.models.components.layers.EdgeConv.forward', EdgeConvGraphnet_forward)
+@patch('graphnet.models.components.layers.EdgeConv.message', EdgeConvGraphnet_message)
+@patch('torch.nn.Sequential.forward', SequentialGraphnet_forward)
+@patch('graphnet.models.task.reconstruction.Task.forward', Task_forward)
+def inference_simplex(model, config: Dict[str, Any], use_labels: bool) -> pd.DataFrame:
+    return inference(model, config, use_labels)

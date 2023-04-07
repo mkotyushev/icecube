@@ -1,4 +1,5 @@
 import argparse
+import pandas as pd
 import torch
 import random, os
 import numpy as np
@@ -8,7 +9,7 @@ from pathlib import Path
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.profilers import AdvancedProfiler
 from pytorch_lightning.strategies.ddp import DDPStrategy
-from graphnet.data.sqlite.sqlite_dataset import SQLiteDataset, SQLiteDatasetMaxNPulses
+from graphnet.data.sqlite.sqlite_dataset import SQLiteDataset
 
 from icecube_utils import (
     CancelAzimuthByPredictionTransform,
@@ -20,9 +21,11 @@ from icecube_utils import (
     train_dynedge_from_scratch,
     FlipTimeTransform,
     FlipCoordinateTransform,
+    train_dynedge_simplex,
 )
 
-
+# example usage:
+# python train_large.py --model-save-dir /weights/test --max-epochs 1 --size-multiplier 1.0 --batch-size 512 --accumulate-grad-batches 1 --seed 0 --weight-loss-by-inverse-n-pulses-log --max-n-pulses-strategy random --mode small --enable-augmentations --lr-onecycle-factors 1e-02 1 1e-02 --lr-schedule-type linear
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--state-dict-path', type=Path, default=None)
@@ -32,18 +35,17 @@ def parse_args():
     parser.add_argument('--batch-size', type=int, default=100)
     parser.add_argument('--accumulate-grad-batches', type=int, default=1)
     parser.add_argument('--seed', type=int, default=0)
-    parser.add_argument('--weight-loss-by-inverse-n-pulses-log', action='store_true')
+    parser.add_argument(
+        '--loss-weight-strategy', 
+        type=str, 
+        choices=['inverse_n_pulses_log', 'zenith_count'],
+        default=None
+    )
     parser.add_argument(
         '--max-n-pulses-strategy', 
         type=str, 
         choices=['clamp', 'random_sequential', 'random'], 
         default='clamp'
-    )
-    parser.add_argument(
-        '--mode', 
-        type=str, 
-        choices=['small', 'large', 'large_contd'], 
-        default='small'
     )
     parser.add_argument('--n-blocks', type=int, default=None)
     parser.add_argument('--zero-new-block', action='store_true')
@@ -51,6 +53,7 @@ def parse_args():
     parser.add_argument('--enable-augmentations', action='store_true')
     parser.add_argument('--lr-onecycle-factors', type=float, nargs=3, default=[1e-02, 1, 1e-02])
     parser.add_argument('--lr-schedule-type', type=str, default='linear', choices=['linear', 'exp'])
+    parser.add_argument('--train-mode', type=str, default='default', choices=['default', 'blocks', 'simplex'])
     args = parser.parse_args()
     return args
 
@@ -68,17 +71,50 @@ def seed_everything(seed: int):
 
 def first_last_pulse_index_to_loss_weight(first_last_pulse_index):
     first, last = first_last_pulse_index[0][0], first_last_pulse_index[0][1]
-    return [[1 / np.log((last - first) + 1)]]
+    if first == last:
+        return [[1.0]]
+    return [[1 / np.log((last - first) + 2)]]
+
+
+class WeightLossByZenithCount:
+    def __init__(self, weights_info_tsv_path):
+        weights_info = pd.read_csv(weights_info_tsv_path, sep='\t')
+        self.weights = weights_info['weights'].values
+        self.zenith_bins = weights_info['zenith_bins'].values
+
+    def __call__(self, zenith):
+        zenith = zenith[0][0]
+        index = np.digitize(zenith, self.zenith_bins) - 1
+        index = np.clip(index, 0, len(self.weights) - 1)
+        return [[self.weights[index]]]
 
 
 features = FEATURES.KAGGLE
 truth = ['zenith', 'azimuth']
 
+# fold_0_val.db is obtained batch_656.parquet
+# train_path/*.parquet are assumed to be batches up to 655 (inclusive)
 config = {
-        # "path": '/workspace/data2/batch_14.db',
-        # "inference_database_path": '/workspace/data2/batch_656.db',
+        'dataset_type': 'parallel_parquet',
+        # 'dataset_type': 'sqlite',
+        # Pathes for large machine
+        'parallel_parquet': {
+            'train_path': Path('/workspace/icecube/data/parquet/train'),
+            'meta_path': Path('/workspace/icecube/data/parquet/train_meta'),
+            'geometry_path': Path('/workspace/icecube/data/sensor_geometry.csv'),
+        },
         "path": '/workspace/icecube/data/fold_0.db',
         "inference_database_path": '/workspace/icecube/data/fold_0_val.db',
+
+        # # Pathes for small machine
+        # 'parallel_parquet': {
+        #     'train_path': Path('/workspace/data2/train'),
+        #     'meta_path': Path('/workspace/data2/train_meta'),
+        #     'geometry_path': Path('/workspace/icecube/data/dataset/sensor_geometry.csv'),
+        # },
+        # "path": '/workspace/data2/batch_14.db',
+        # "inference_database_path": '/workspace/data2/batch_656.db',
+
         "pulsemap": 'pulse_table',
         "truth_table": 'meta_table',
         "features": features,
@@ -96,19 +132,23 @@ config = {
         "fit": {
             "max_epochs": 10,
             "gpus": [0],
-            "distribution_strategy": DDPStrategy(find_unused_parameters=False),
+            "distribution_strategy": 'auto',
             "precision": '16-mixed', 
             "log_every_n_steps": 50,
-            "val_check_interval": 0.2,
+            "val_check_interval": 0.05,  # originally was 0.5 on 10% of data, for parallel_parquet div by 10
+            # "num_sanity_val_steps": 0,
             # "limit_train_batches": 100,
             # "limit_val_batches": 100,
             # "profiler": "simple",
             # "profiler": AdvancedProfiler(dirpath=".", filename="perf_logs"),
         },
         'base_dir': 'training',
-        'bias': True,
         'dynedge': {},
+        # applicable only for dataset_type == 'sqlite',
+        # dataset_type == 'parquet' always shuffles data
+        # and moreover order is not really deterministic
         'shuffle_train': True,
+        'optimizer_class': torch.optim.AdamW,
         'optimizer_kwargs': {
             "lr": 1e-03, 
             "eps": 1e-03
@@ -123,17 +163,22 @@ config = {
             'max_n_pulses': 200,
             'max_n_pulses_strategy': 'clamp'
         },
-        'loss_weight': {
-            'loss_weight_table': 'meta_table',
-            'loss_weight_columns': ['first_pulse_index', 'last_pulse_index'],
-            'loss_weight_transform': first_last_pulse_index_to_loss_weight,
-        },
-        'dataset_class': SQLiteDataset,
-        # 'dataset_class': SQLiteDatasetMaxNPulses,
+        'loss_weight': {},
         'zero_new_block': False,
         'block_output_aggregation': 'sum',
         'train_transforms': [],
         'val_transforms': [],
+        'simplex': {
+            'n_verts': 3,
+            'LMBD': 1e-10,
+            'nsample': 5,
+            'infrerence_sampling_average': 'angles'
+        },
+        'dynedge': {
+            'bias': True,
+            'bn': True,
+            'dropout': None,
+        }
 }
 
 
@@ -141,7 +186,7 @@ if __name__ == '__main__':
     args = parse_args()
     seed_everything(args.seed)
 
-    config['fit']['max_epochs'] = args.max_epochs
+    config['train_mode'] = args.train_mode
     config['batch_size'] = args.batch_size
     config['accumulate_grad_batches'] = args.accumulate_grad_batches
     config['dynedge']['dynedge_layer_sizes'] = [
@@ -150,17 +195,47 @@ if __name__ == '__main__':
     ]
     config['max_n_pulses']['max_n_pulses_strategy'] = args.max_n_pulses_strategy
 
-    if args.mode == 'large':
-        config['fit']['val_check_interval'] = 0.1
-        config['fit']['max_steps'] = 10000
-    elif args.mode == 'large_contd':
-        config['fit']['val_check_interval'] = 0.1
-        config['fit']['max_steps'] = -1
-    elif args.mode == 'small':
-        config['fit']['val_check_interval'] = 0.5
-        config['fit']['max_steps'] = -1
-    else:
-        raise ValueError(f'Unknown mode {args.mode}')
+    # Convert patience from epochs to validation checks
+    config['early_stopping_patience'] = int(
+        config['early_stopping_patience'] / 
+        config['fit']['val_check_interval']
+    )
+
+    # Replace max_epochs with iterating files max_epochs times
+    # to apply files shuffilg for parallel_parquet for each epoch
+    # and change related parameters accordingly
+    # TODO: fix it breaks limit_train_batches
+    if config['dataset_type'] == 'parallel_parquet':
+        config['fit']['max_epochs'] = 1
+
+        if args.train_mode == 'simplex':  # Simplex run on limited subset of train
+            filepathes = sorted(
+                [
+                    filepath
+                    for filepath in config['parallel_parquet']['train_path'].glob('**/*.parquet')
+                    if int(filepath.stem.split('_')[1]) < 132
+                ]
+            )
+            config['fit']['val_check_interval'] = 1
+        else:
+            filepathes = sorted(
+                list(
+                    config['parallel_parquet']['train_path'].glob('**/*.parquet')
+                )
+            )
+        config['parallel_parquet']['filepathes'] = []
+        for i in range(args.max_epochs):
+            random.shuffle(filepathes)
+            config['parallel_parquet']['filepathes'] += filepathes[:]
+
+        config['fit']['val_check_interval'] = config['fit']['val_check_interval'] / args.max_epochs
+
+        config['parallel_parquet']['actual_max_epochs'] = args.max_epochs
+        # originally was 0.5 on 10% of data, for parallel_parquet div by 10
+        config['parallel_parquet']['warmup_epochs'] = 0.05
+
+    config['fit']['gradient_clip_val'] = 100 * args.size_multiplier ** 2
+    config['fit']['gradient_clip_algorithm'] = 'norm'
 
     # Set LR schedule
     if args.lr_schedule_type == 'linear':
@@ -173,18 +248,18 @@ if __name__ == '__main__':
             LinearLRSchedulerPiece(args.lr_onecycle_factors[0], args.lr_onecycle_factors[1]),
             ExpLRSchedulerPiece(args.lr_onecycle_factors[1], args.lr_onecycle_factors[2], decay=0.2),
         ]
-    
-    # Convert patience from epochs to validation checks
-    config['early_stopping_patience'] = int(
-        config['early_stopping_patience'] / 
-        config['fit']['val_check_interval']
-    )
 
-    if args.weight_loss_by_inverse_n_pulses_log:
+    if args.loss_weight_strategy == 'inverse_n_pulses_log':
         config['loss_weight'] = {
             'loss_weight_table': 'meta_table',
             'loss_weight_columns': ['first_pulse_index', 'last_pulse_index'],
             'loss_weight_transform': first_last_pulse_index_to_loss_weight,
+        }
+    elif args.loss_weight_strategy == 'zenith_count':
+        config['loss_weight'] = {
+            'loss_weight_table': 'meta_table',
+            'loss_weight_columns': ['zenith'],
+            'loss_weight_transform': WeightLossByZenithCount('./weights_info.tsv'),
         }
 
     if args.enable_augmentations:
@@ -251,12 +326,19 @@ if __name__ == '__main__':
     ):
         config['fit']['ckpt_path'] = args.state_dict_path
     
-    if args.n_blocks is not None:
+    if args.train_mode == 'blocks':
+        assert args.n_blocks is not None
         config['fit']['distribution_strategy'] = 'auto'
         model = train_dynedge_blocks(
             config, 
             args.n_blocks, 
             args.model_save_dir,
+            args.state_dict_path
+        )
+    elif args.train_mode == 'simplex':
+        assert args.state_dict_path is not None
+        model = train_dynedge_simplex(
+            config, 
             args.state_dict_path
         )
     else:
