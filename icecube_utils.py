@@ -1,5 +1,6 @@
 
 import gc
+import math
 from pathlib import Path
 import numpy as np
 import os
@@ -122,6 +123,44 @@ class PiecewiceFactorsLRScheduler(LRScheduler):
             self.pieces[self._current_piece_index](pct) * base_lr
             for base_lr in self.base_lrs
         ]
+
+
+def make_scheduler_kwargs(config, train_dataloader):
+    assert "scheduler_kwargs" in config and "pieces" in config["scheduler_kwargs"]
+
+    # Pytorch schedulers are parametrized on number of steps
+    # and not in percents, so scheduler_kwargs need to be
+    # constructed here
+    assert len(config["scheduler_kwargs"]["pieces"]) == 2, \
+        "Only 2 pieces one-cycle LR is supported for now"
+
+    if config['dataset_type'] == 'parallel_parquet':
+        # There is only one epoch for that dataset type,
+        # but consisting data of all epochs
+        assert config['fit']['max_epochs'] == 1
+        single_epoch_steps = math.ceil(
+            len(train_dataloader) /
+            config['parallel_parquet']['actual_max_epochs']
+        )
+        max_epochs = config['parallel_parquet']['actual_max_epochs']
+        warmup_epochs = config['parallel_parquet']['warmup_epochs']
+    else:
+        # Usial case
+        single_epoch_steps = len(train_dataloader)
+        max_epochs = config['fit']['max_epochs']
+        warmup_epochs = 0.5
+    
+    scheduler_kwargs = {
+        # 0.5 epoch warmup piece + rest piece
+        "milestones": [
+            0,
+            math.ceil(single_epoch_steps * warmup_epochs),
+            math.ceil(single_epoch_steps * max_epochs),
+        ],
+        "pieces": config["scheduler_kwargs"]["pieces"],
+    }
+
+    return scheduler_kwargs
 
 
 def build_model(
@@ -341,39 +380,7 @@ def build_model(
         additional_attributes = [*config['truth'], 'event_id']
 
 
-    assert "scheduler_kwargs" in config and "pieces" in config["scheduler_kwargs"]
-
-    # Pytorch schedulers are parametrized on number of steps
-    # and not in percents, so scheduler_kwargs need to be
-    # constructed here
-    assert len(config["scheduler_kwargs"]["pieces"]) == 2, \
-        "Only 2 pieces one-cycle LR is supported for now"
-
-    if config['dataset_type'] == 'parallel_parquet':
-        # There is only one epoch for that dataset type,
-        # but consisting data of all epochs
-        assert config['fit']['max_epochs'] == 1
-        single_epoch_steps = \
-            len(train_dataloader) // \
-            config['parallel_parquet']['actual_max_epochs']
-        max_epochs = config['parallel_parquet']['actual_max_epochs']
-        warmup_epochs = config['parallel_parquet']['warmup_epochs']
-    else:
-        # Usial case
-        single_epoch_steps = len(train_dataloader)
-        max_epochs = config['fit']['max_epochs']
-        warmup_epochs = 0.5
-    
-    scheduler_kwargs = {
-        # 0.5 epoch warmup piece + rest piece
-        "milestones": [
-            0,
-            single_epoch_steps * warmup_epochs,
-            single_epoch_steps * max_epochs,
-        ],
-        "pieces": config["scheduler_kwargs"]["pieces"],
-    }
-
+    scheduler_kwargs = make_scheduler_kwargs(config, train_dataloader)
     model = StandardModel(
         detector=detector,
         gnn=gnn,
@@ -407,7 +414,7 @@ def load_pretrained_model(
             model, _, _ = build_model_simplex(
                 config=config, 
                 state_dict_path=None,
-                add_vertices=True
+                is_inference=True
             )
         else:
             model = build_model(config = config, 
@@ -550,7 +557,8 @@ def train_dynedge_from_scratch(config: Dict[str, Any], state_dict_path=None) -> 
     archive = os.path.join(config['base_dir'], "train_model_without_configs")
     run_name = f"dynedge_{config['target']}_{config['run_name_tag']}"
 
-    train_dataloader, validate_dataloader = make_dataloaders(config = config)
+    labels = {'direction': Direction(azimuth_key=config['truth'][1], zenith_key=config['truth'][0])}
+    train_dataloader, validate_dataloader = make_dataloaders(config = config, labels = labels)
 
     if state_dict_path is None:
         model = build_model(config, train_dataloader)
@@ -853,7 +861,8 @@ def train_dynedge_blocks(
     assert n_blocks > 0, f'n_blocks must be > 0, got {n_blocks}'
 
     # Build empty block model
-    train_dataloader, validate_dataloader = make_dataloaders(config=config)
+    labels = {'direction': Direction(azimuth_key=config['truth'][1], zenith_key=config['truth'][0])}
+    train_dataloader, validate_dataloader = make_dataloaders(config=config, labels=labels)
     BlockLinear.output_aggregation = config['block_output_aggregation']
     with patch('torch.nn.Linear', BlockLinear):
         model = build_model(config, train_dataloader)
@@ -1673,7 +1682,7 @@ class EarlyStoppingTrainStepCallback(Callback):
 def build_model_simplex(
     config, 
     state_dict_path=None,
-    add_vertices=False
+    is_inference=False
 ):
     base_model = None
     if state_dict_path is not None:
@@ -1681,43 +1690,16 @@ def build_model_simplex(
             config, 
             str(state_dict_path)
         )
-    train_dataloader, validate_dataloader = make_dataloaders(config=config)
+    labels = None
+    if is_inference:
+        labels = {'direction': Direction(azimuth_key=config['truth'][1], zenith_key=config['truth'][0])}
+    train_dataloader, validate_dataloader = make_dataloaders(config=config, labels=labels)
     
     def build_model_wrapper(n_output, fix_points, **architecture_kwargs):
         model = build_model(config, train_dataloader, fix_points)
         return model
 
-    assert "scheduler_kwargs" in config and "pieces" in config["scheduler_kwargs"]
-    # Pytorch schedulers are parametrized on number of steps
-    # and not in percents, so scheduler_kwargs need to be
-    # constructed here
-    assert len(config["scheduler_kwargs"]["pieces"]) == 2, \
-        "Only 2 pieces one-cycle LR is supported for now"
-    if config['dataset_type'] == 'parallel_parquet':
-        # There is only one epoch for that dataset type,
-        # but consisting data of all epochs
-        assert config['fit']['max_epochs'] == 1
-        single_epoch_steps = \
-            len(train_dataloader) // \
-            config['parallel_parquet']['actual_max_epochs']
-        max_epochs = config['parallel_parquet']['actual_max_epochs']
-        warmup_epochs = config['parallel_parquet']['warmup_epochs']
-    else:
-        # Usial case
-        single_epoch_steps = len(train_dataloader)
-        max_epochs = config['fit']['max_epochs']
-        warmup_epochs = 0.5
-    
-    scheduler_kwargs = {
-        # 0.5 epoch warmup piece + rest piece
-        "milestones": [
-            0,
-            single_epoch_steps * warmup_epochs,
-            single_epoch_steps * max_epochs,
-        ],
-        "pieces": config["scheduler_kwargs"]["pieces"],
-    }
-
+    scheduler_kwargs = make_scheduler_kwargs(config, train_dataloader)
     simplex_model_wrapper = SimplexNetGraphnet(
         architecture=build_model_wrapper, 
         n_verts=config['simplex']['n_verts'], 
@@ -1736,7 +1718,7 @@ def build_model_simplex(
     )
 
     # If building for inference, add vertices
-    if add_vertices:
+    if is_inference:
         for vertex_index in range(1, simplex_model_wrapper.n_verts + 1):
             simplex_model_wrapper.add_vert(vertex_index)
 
@@ -1757,7 +1739,8 @@ def train_dynedge_simplex(
     simplex_model_wrapper, train_dataloader, validate_dataloader = \
         build_model_simplex(
             config, 
-            state_dict_path
+            state_dict_path,
+            is_inference=False
         )
     start_simplex_steps = 100
     simplex_model_wrapper = train_dynedge(
@@ -1772,7 +1755,7 @@ def train_dynedge_simplex(
                 start_step=start_simplex_steps + 1,
                 mode='min',
                 min_delta=0.0,
-                patience=500,
+                patience=5000,  # 100 log steps
             )
         ]
     )

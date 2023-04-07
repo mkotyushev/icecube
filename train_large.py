@@ -1,4 +1,5 @@
 import argparse
+import math
 import pandas as pd
 import torch
 import random, os
@@ -30,7 +31,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--state-dict-path', type=Path, default=None)
     parser.add_argument('--model-save-dir', type=Path, default=None)
-    parser.add_argument('--max-epochs', type=int, default=10)
+    parser.add_argument('--max-epochs', type=float, default=10)
     parser.add_argument('--size-multiplier', type=float, default=1.0)
     parser.add_argument('--batch-size', type=int, default=100)
     parser.add_argument('--accumulate-grad-batches', type=int, default=1)
@@ -224,9 +225,17 @@ if __name__ == '__main__':
                 )
             )
         config['parallel_parquet']['filepathes'] = []
-        for i in range(args.max_epochs):
+
+        for i in range(math.floor(args.max_epochs)):
             random.shuffle(filepathes)
             config['parallel_parquet']['filepathes'] += filepathes[:]
+        # If max_epochs is float
+        if args.max_epochs - math.floor(args.max_epochs) > 0:
+            random.shuffle(filepathes)
+            n_files_in_fractional_epoch = math.ceil(
+                len(filepathes) * (args.max_epochs - math.floor(args.max_epochs))
+            )
+            config['parallel_parquet']['filepathes'] += filepathes[:n_files_in_fractional_epoch]
 
         config['fit']['val_check_interval'] = config['fit']['val_check_interval'] / args.max_epochs
 
