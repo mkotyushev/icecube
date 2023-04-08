@@ -83,6 +83,15 @@ class LinearLRSchedulerPiece:
 
     def __call__(self, pct):
         return self.start_lr + pct * (self.stop_lr - self.start_lr)
+    
+
+class CosineLRSchedulerPiece:
+    def __init__(self, start_lr, stop_lr):
+        self.start_lr = start_lr
+        self.stop_lr = stop_lr
+
+    def __call__(self, pct):
+        return self.stop_lr + (self.start_lr - self.stop_lr) * (1 + np.cos(np.pi * pct)) / 2
 
 
 class PiecewiceFactorsLRScheduler(LRScheduler):

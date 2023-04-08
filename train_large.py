@@ -16,6 +16,7 @@ from icecube_utils import (
     CancelAzimuthByPredictionTransform,
     ExpLRSchedulerPiece,
     LinearLRSchedulerPiece,
+    CosineLRSchedulerPiece,
     OneOfTransform,
     RotateAngleTransform,
     train_dynedge_blocks,
@@ -53,8 +54,10 @@ def parse_args():
     parser.add_argument('--block-output-aggregation', type=str, choices=['mean', 'sum'], default='sum')
     parser.add_argument('--enable-augmentations', action='store_true')
     parser.add_argument('--lr-onecycle-factors', type=float, nargs=3, default=[1e-02, 1, 1e-02])
-    parser.add_argument('--lr-schedule-type', type=str, default='linear', choices=['linear', 'exp'])
+    parser.add_argument('--lr-schedule-type', type=str, default='linear', choices=['linear', 'exp', 'cos'])
     parser.add_argument('--train-mode', type=str, default='default', choices=['default', 'blocks', 'simplex'])
+    parser.add_argument('--bn', action='store_true')
+    parser.add_argument('--dropout', type=float, required=False, default=None)
     args = parser.parse_args()
     return args
 
@@ -194,6 +197,8 @@ if __name__ == '__main__':
         (int(x * args.size_multiplier), int(y * args.size_multiplier)) 
         for x, y in [(128, 256), (336, 256), (336, 256), (336, 256)]
     ]
+    config['dynedge']['bn'] = args.bn
+    config['dynedge']['dropout'] = args.dropout
     config['max_n_pulses']['max_n_pulses_strategy'] = args.max_n_pulses_strategy
 
     # Convert patience from epochs to validation checks
@@ -256,6 +261,11 @@ if __name__ == '__main__':
         config['scheduler_kwargs']['pieces'] = [
             LinearLRSchedulerPiece(args.lr_onecycle_factors[0], args.lr_onecycle_factors[1]),
             ExpLRSchedulerPiece(args.lr_onecycle_factors[1], args.lr_onecycle_factors[2], decay=0.2),
+        ]
+    elif args.lr_schedule_type == 'cos':
+        config['scheduler_kwargs']['pieces'] = [
+            LinearLRSchedulerPiece(args.lr_onecycle_factors[0], args.lr_onecycle_factors[1]),
+            CosineLRSchedulerPiece(args.lr_onecycle_factors[1], args.lr_onecycle_factors[2]),
         ]
 
     if args.loss_weight_strategy == 'inverse_n_pulses_log':
