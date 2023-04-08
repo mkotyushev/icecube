@@ -1136,9 +1136,9 @@ class FlipOverXYLineTransform(RandomTransform):
         # Flip direction
         if target is not None:
             azimuth, zenith = target['azimuth'], target['zenith']
-            x, y, z = angles_to_xyz(azimuth, zenith)
-            x, y = reflect_2d(x, y, self.k, self.b)
-            target['azimuth'], target['zenith'] = xyz_to_angles(x, y, z)
+            x_angles, y_angles, z_angles = angles_to_xyz(azimuth, zenith)
+            x_angles, y_angles = reflect_2d(x_angles, y_angles, self.k, self.b)
+            target['azimuth'], target['zenith'] = xyz_to_angles(x_angles, y_angles, z_angles)
 
         input[:, self.feature_to_index['x']] = x
         input[:, self.feature_to_index['y']] = y
