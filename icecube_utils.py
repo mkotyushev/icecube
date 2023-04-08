@@ -1078,6 +1078,73 @@ class FlipCoordinateTransform(RandomTransform):
             target['azimuth'], target['zenith'] = xyz_to_angles(x, y, z)
         
         return input, target
+    
+
+def rotate(origin, point, angle):
+    """
+    Rotate a point counterclockwise by a given angle around a given origin.
+
+    The angle should be given in radians.
+    """
+    ox, oy = origin
+    px, py = point
+
+    qx = ox + np.cos(angle) * (px - ox) - np.sin(angle) * (py - oy)
+    qy = oy + np.sin(angle) * (px - ox) + np.cos(angle) * (py - oy)
+    return qx, qy
+
+
+def reflect(x, y, k, b):
+    # TODO check if it works for other quaters than 2nd
+    # Get angle
+    alpha = np.pi / 2 + np.arctan(k)
+
+    # Shift to origin
+    x_shift, y_shift = \
+        b * np.cos(np.pi / 2 - alpha) * np.cos(alpha), \
+        b * np.cos(np.pi / 2 - alpha) * np.sin(alpha)
+    x, y = x - x_shift, y - y_shift
+
+    # Rotate
+    x, y = rotate((0, 0), (x, y), -alpha)
+
+    # Reflect
+    x = -x
+
+    # Rotate back
+    x, y = rotate((0, 0), (x, y), alpha)
+
+    # Shift back
+    x, y = x + x_shift, y + y_shift
+
+    return x, y
+
+class FlipOverXYLineTransform(RandomTransform):
+    def __init__(self, features, p, k, b):
+        super().__init__(features, p)
+        self.k = k
+        self.b = b
+
+    def transform(self, input, target=None):
+        x = input[:, self.feature_to_index['x']]
+        y = input[:, self.feature_to_index['y']]
+        z = input[:, self.feature_to_index['z']]
+
+        # Flip over line
+        x, y = reflect(x, y, self.k, self.b)
+
+        # Flip direction
+        if target is not None:
+            azimuth, zenith = target['azimuth'], target['zenith']
+            x, y, z = angles_to_xyz(azimuth, zenith)
+            x, y = reflect(x, y, self.k, self.b)
+            target['azimuth'], target['zenith'] = xyz_to_angles(x, y, z)
+
+        input[:, self.feature_to_index['x']] = x
+        input[:, self.feature_to_index['y']] = y
+        input[:, self.feature_to_index['z']] = z
+
+        return input, target
 
 
 def rotate(v, k, angle):
