@@ -176,7 +176,8 @@ config = {
             'n_verts': 3,
             'LMBD': 1e-10,
             'nsample': 5,
-            'infrerence_sampling_average': 'angles'
+            'infrerence_sampling_average': 'angles',
+            'infrerence_sampling_topk': None
         },
         'dynedge': {
             'bias': True,
