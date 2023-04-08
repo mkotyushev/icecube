@@ -15,6 +15,7 @@ from graphnet.data.sqlite.sqlite_dataset import SQLiteDataset
 from icecube_utils import (
     CancelAzimuthByPredictionTransform,
     ExpLRSchedulerPiece,
+    FlipOverXYLineTransform,
     LinearLRSchedulerPiece,
     CosineLRSchedulerPiece,
     OneOfTransform,
@@ -293,10 +294,7 @@ if __name__ == '__main__':
             ]
         else:
             config['train_transforms'] = [
-                FlipCoordinateTransform(features=features, p=0.5, coordinate='x'),
-                FlipCoordinateTransform(features=features, p=0.5, coordinate='y'),
-                FlipCoordinateTransform(features=features, p=0.5, coordinate='z'),
-                RotateAngleTransform(features=features, p=0.5, angle='azimuth'),
+                FlipOverXYLineTransform(features=features, p=0.5, k=-1.2334245570477371, b=22.436265094233192),
             ]
 
     # TODO: make a proper rotation for zenith: 
