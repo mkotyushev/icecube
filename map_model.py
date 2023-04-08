@@ -45,13 +45,16 @@ features = FEATURES.KAGGLE
 truth = TRUTH.KAGGLE
 
 
-def get_args():
+def get_args(args=None):
     parser = get_parser()
     parser.add_argument('size_multiplier', type=float, default=1.0)
     parser.add_argument('from_model_state_dict_path', type=Path)
     parser.add_argument('to_model_state_dict_path', type=Path)
     parser.add_argument('mapped_model_save_dir', type=Path)
-    args = parser.parse_args()
+    if args is None:
+        args = parser.parse_args()
+    else:
+        args = parser.parse_args(args)
 
     args.model_name = 'mlpnet'
     args.n_epochs = 10
@@ -273,6 +276,13 @@ def process_activations(args, activations, layer0_name, layer1_name, has_bn=Fals
         layer0_name = layer0_name.replace('.linear', '.bn')
         layer1_name = layer1_name.replace('.linear', '.bn')
 
+        layer0_name = layer0_name \
+            .replace('.running_mean', '.bias') \
+            .replace('.running_var', '.bias')
+        layer1_name = layer1_name \
+            .replace('.running_mean', '.bias') \
+            .replace('.running_var', '.bias')
+
     # Bias and weights use same activations
     layer0_name = layer0_name \
         .replace('.weight', '') \
@@ -307,7 +317,7 @@ def process_activations(args, activations, layer0_name, layer1_name, has_bn=Fals
 
 def get_acts_wassersteinized_layers_modularized(
     args, 
-    networks, 
+    networks_named_params, 
     activations, 
     eps=1e-7, 
     test_loader=None,
@@ -330,7 +340,7 @@ def get_acts_wassersteinized_layers_modularized(
     T_var = None
 
     previous_layer_shape = None
-    num_layers = len(list(zip(networks[0].parameters(), networks[1].parameters())))
+    num_layers = len(networks_named_params)
     ground_metric_object = GroundMetric(args)
 
     if args.update_acts or args.eval_aligned:
@@ -341,7 +351,6 @@ def get_acts_wassersteinized_layers_modularized(
     else:
         device = torch.device('cuda:{}'.format(args.gpu_id))
 
-    networks_named_params = list(zip(networks[0].named_parameters(), networks[1].named_parameters()))
     idx = 0
     incoming_layer_aligned = True # for input
     while idx < num_layers:
@@ -352,6 +361,7 @@ def get_acts_wassersteinized_layers_modularized(
 
         # BN affine params are handled the same way as bias
         is_bias = \
+            ('running_mean' in layer0_name or 'running_var' in layer0_name) or \
             ('bn.weight' in layer0_name or 'bn.bias' in layer0_name) or \
             'bias' in layer0_name
         is_first_layer = (idx == 0) if args.disable_bias else (idx <= 1)
@@ -438,13 +448,6 @@ def get_acts_wassersteinized_layers_modularized(
             else:
                 aligned_wt = torch.matmul(fc_layer0_weight_data, T_var)
             logger.info(f"\t shape of aligned_wt {aligned_wt.shape}")
-
-        # Update activations
-        if args.update_acts:
-            assert args.second_model_name is None
-            activations_0, activations_1 = _get_updated_acts_v0(args, layer_shape, aligned_wt,
-                                                                model0_aligned_layers, networks,
-                                                                test_loader, [layer0_name, layer1_name])
 
         # Calculate activation histograms
         if args.importance is None or (idx == num_layers -1):
@@ -605,14 +608,31 @@ def map_model(args, model_from, model_to, dataloader, n_samples, size_multiplier
             mode='raw',
             layer_names=layer_names
         )
+        
+        # Remove the num_batches_tracked from the state_dicts
+        model_from_params = models[0].state_dict()
+        model_to_params = models[1].state_dict()
+        num_batches_tracked = {
+            name: param 
+            for name, param in model_from_params.items() 
+            if 'num_batches_tracked' in name
+        }
+        for name in num_batches_tracked:
+            del model_from_params[name]
+            del model_to_params[name]
+
+        networks_named_params = list(zip(model_from_params.items(), model_to_params.items()))
+
         _, mapped_state_dict, _ = get_acts_wassersteinized_layers_modularized(
-            args, models, activations, test_loader=None, has_bn=has_bn)
+            args, networks_named_params, activations, test_loader=None, has_bn=has_bn)
 
     # TODO fix scaling
     mapped_state_dict = {
         k: ((v * (size_multiplier) ** 0.5) if k.startswith('_gnn._conv_layers.0.nn.0') else v) 
         for k, v in mapped_state_dict.items()
     }
+    # Add the num_batches_tracked back to the resulting state_dict
+    mapped_state_dict.update(num_batches_tracked)
         
     mapped_state_dict = {
         k: v.squeeze() 
