@@ -1080,7 +1080,7 @@ class FlipCoordinateTransform(RandomTransform):
         return input, target
     
 
-def rotate(origin, point, angle):
+def rotate_2d(origin, point, angle):
     """
     Rotate a point counterclockwise by a given angle around a given origin.
 
@@ -1094,7 +1094,7 @@ def rotate(origin, point, angle):
     return qx, qy
 
 
-def reflect(x, y, k, b):
+def reflect_2d(x, y, k, b):
     # TODO check if it works for other quaters than 2nd
     # Get angle
     alpha = np.pi / 2 + np.arctan(k)
@@ -1106,13 +1106,13 @@ def reflect(x, y, k, b):
     x, y = x - x_shift, y - y_shift
 
     # Rotate
-    x, y = rotate((0, 0), (x, y), -alpha)
+    x, y = rotate_2d((0, 0), (x, y), -alpha)
 
     # Reflect
     x = -x
 
     # Rotate back
-    x, y = rotate((0, 0), (x, y), alpha)
+    x, y = rotate_2d((0, 0), (x, y), alpha)
 
     # Shift back
     x, y = x + x_shift, y + y_shift
@@ -1131,13 +1131,13 @@ class FlipOverXYLineTransform(RandomTransform):
         z = input[:, self.feature_to_index['z']]
 
         # Flip over line
-        x, y = reflect(x, y, self.k, self.b)
+        x, y = reflect_2d(x, y, self.k, self.b)
 
         # Flip direction
         if target is not None:
             azimuth, zenith = target['azimuth'], target['zenith']
             x, y, z = angles_to_xyz(azimuth, zenith)
-            x, y = reflect(x, y, self.k, self.b)
+            x, y = reflect_2d(x, y, self.k, self.b)
             target['azimuth'], target['zenith'] = xyz_to_angles(x, y, z)
 
         input[:, self.feature_to_index['x']] = x
