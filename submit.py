@@ -16,6 +16,7 @@ def parse_args():
     parser.add_argument('--save-path', type=str, default='/kaggle/working/submission.csv')
     parser.add_argument('--batch-size', type=int, default=128)
     parser.add_argument('--num-workers', type=int, default=3)
+    parser.add_argument('--max-n-pulses', type=int, default=None)
     return parser.parse_args()
 
 
@@ -35,6 +36,8 @@ def prepare_dataframe(df, angle_post_fix = '_reco', vec_post_fix = '') -> pd.Dat
 def main(args):
     seed_everything(0)
 
+    config['train_mode'] = 'default'
+    config['dataset_type'] = 'sqlite'
     config['train_transforms'] = []
     config['dynedge']['dynedge_layer_sizes'] = [
         (x * args.size_multiplier, y * args.size_multiplier) 
@@ -46,9 +49,15 @@ def main(args):
     config['num_workers'] = args.num_workers
     config['path'] = args.test_db_path
     config['inference_database_path'] = args.test_db_path
-    config['bias'] = True
     config['fit']['distribution_strategy'] = 'ddp'
+    config['dynedge']['bias'] = True
+    config['dynedge']['bn'] = True
+    config['dynedge']['dropout'] = None
+
     config['max_n_pulses']['max_n_pulses'] = None
+    if args.max_n_pulses is not None:
+        config['max_n_pulses']['max_n_pulses'] = args.max_n_pulses
+        config['max_n_pulses']['max_n_pulses_strategy'] = 'clamp'    
 
     model = load_pretrained_model(
         config=config, 

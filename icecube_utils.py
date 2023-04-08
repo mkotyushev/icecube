@@ -444,7 +444,7 @@ def load_pretrained_model(
     else:
         return model
 
-def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
+def make_dataloaders(config: Dict[str, Any], labels=None) -> List[Any]:
     """Constructs training and validation dataloaders for training with early stopping."""
     loss_weight_kwargs, max_n_pulses_kwargs = {}, {}
     if 'max_n_pulses' in config:
@@ -477,7 +477,7 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
         batch_size = config['batch_size'],
         num_workers = config['num_workers'],
         shuffle = False,
-        labels = {'direction': Direction(azimuth_key=config['truth'][1], zenith_key=config['truth'][0])},
+        labels = labels,
         index_column = config['index_column'],
         truth_table = config['truth_table'],
         transforms = config['train_transforms'],
@@ -496,7 +496,7 @@ def make_dataloaders(config: Dict[str, Any]) -> List[Any]:
         batch_size = config['batch_size'],
         num_workers = config['num_workers'],
         shuffle = False,
-        labels = {'direction': Direction(azimuth_key=config['truth'][1], zenith_key=config['truth'][0])},
+        labels = labels,
         index_column = config['index_column'],
         truth_table = config['truth_table'],
         max_n_pulses=config['max_n_pulses']['max_n_pulses'],
@@ -574,7 +574,7 @@ def inference(model, config: Dict[str, Any], use_labels: bool) -> pd.DataFrame:
     if use_labels:
         labels = {'direction': Direction(azimuth_key=config['truth'][1], zenith_key=config['truth'][0])}
     """Applies model to the database specified in config['inference_database_path'] and saves results to disk."""
-    _, validate_dataloader = make_dataloaders(config=config)
+    _, validate_dataloader = make_dataloaders(config=config, labels=labels)
     
     # Get predictions
     with torch.no_grad():
