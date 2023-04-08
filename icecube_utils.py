@@ -1351,7 +1351,8 @@ class SimplexNetGraphnet(Model):
         scheduler_kwargs: Optional[Dict] = None,
         scheduler_config: Optional[Dict] = None,
         simplex_volume_loss_enabled: bool = True,
-        infrerence_sampling_average: str = 'angles'
+        infrerence_sampling_average: str = 'angles',
+        infrerence_sampling_topk: int = None,
     ):
         super().__init__()
         self.save_hyperparameters(ignore=['base_model'])
@@ -1383,6 +1384,7 @@ class SimplexNetGraphnet(Model):
 
         self.n_verts = n_verts
         self.nsample = nsample
+        self.infrerence_sampling_topk = infrerence_sampling_topk
         self.current_vol_reg = self.reg_pars[0]
         self.simplex_volume_loss_enabled = simplex_volume_loss_enabled
         assert infrerence_sampling_average in ['angles', 'direction']
@@ -1530,12 +1532,19 @@ class SimplexNetGraphnet(Model):
         for i in range(len(output)):
             if self.infrerence_sampling_average == 'angles':
                 task_output = output[i]  # list of nsamples, each is (nbatch, 4)
-                # Normalize
                 task_output = torch.stack(task_output, dim=0)  # (nsamples, nbatch, 4)
+
+                # Select top-k by kappa
+                if self.infrerence_sampling_topk is not None:
+                    kappa = task_output[0][:, 3]  # (nsamples, nbatch)
+                    _, topk = kappa.topk(self.infrerence_sampling_topk, dim=0)  # (nbatch, k)
+                    task_output = task_output[topk, torch.arange(task_output.shape[1])]  # (k, nbatch)
+
+                # Normalize
                 x, y, z = \
                     task_output[:, :, 0], \
                     task_output[:, :, 1], \
-                    task_output[:, :, 2]  # each is (nsamples, nbatch)
+                    task_output[:, :, 2]  # each is (k, nbatch)
                 norm = (x ** 2 + y ** 2 + z ** 2).sqrt()
                 x = x / norm
                 y = y / norm
@@ -1724,6 +1733,7 @@ def build_model_simplex(
         },
         simplex_volume_loss_enabled=False,
         infrerence_sampling_average=config['simplex']['infrerence_sampling_average'],
+        infrerence_sampling_topk=config['simplex']['infrerence_sampling_topk'],
     )
 
     # If building for inference, add vertices
