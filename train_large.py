@@ -347,7 +347,7 @@ if __name__ == '__main__':
     ):
         config['fit']['ckpt_path'] = args.state_dict_path
     
-    if args.train_mode == 'blocks':
+    if args.train_mode == 'block':
         assert args.n_blocks is not None
         config['fit']['distribution_strategy'] = 'auto'
         model = train_dynedge_blocks(
