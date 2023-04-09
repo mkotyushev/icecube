@@ -168,7 +168,7 @@ config = {
         },
         'loss_weight': {},
         'block': {
-            'zero_new': True,
+            'zero_new': False,
             'output_aggregation': 'sum',
             'block_size_scale': 0.5,
         },

@@ -1045,6 +1045,10 @@ class BlockStandardModel(StandardModel):
         scheduler_up_to_last.step()
         scheduler_last.step()
 
+        # Log learning rate
+        self.log('lr_up_to_last', scheduler_up_to_last.get_last_lr()[0])
+        self.log('lr_last', scheduler_last.get_last_lr()[0])
+
     def up_to_last_block_parameters(self):
         for module in self.modules(): 
             if isinstance(module, BlockModule):
