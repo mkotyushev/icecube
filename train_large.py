@@ -185,7 +185,8 @@ config = {
             'bias': True,
             'bn': True,
             'dropout': None,
-        }
+        },
+        'model_kwargs': {}
 }
 
 
@@ -348,7 +349,6 @@ if __name__ == '__main__':
         assert args.n_blocks is not None
         
         # Gradient clipping is model kwargs due to manual optimization
-        config['model_kwargs'] = dict()
         config['model_kwargs']['gradient_clip_val'] = config['fit']['gradient_clip_val']
         config['model_kwargs']['gradient_clip_algorithm'] = config['fit']['gradient_clip_algorithm']
         del config['fit']['gradient_clip_val'], config['fit']['gradient_clip_algorithm']
