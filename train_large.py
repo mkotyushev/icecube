@@ -200,7 +200,6 @@ if __name__ == '__main__':
         (int(x * args.size_multiplier), int(y * args.size_multiplier)) 
         for x, y in [(128, 256), (336, 256), (336, 256), (336, 256)]
     ]
-    config['dynedge']['repeat_input'] = int(args.size_multiplier)
     config['dynedge']['bn'] = args.bn
     config['dynedge']['dropout'] = args.dropout
     config['max_n_pulses']['max_n_pulses_strategy'] = args.max_n_pulses_strategy

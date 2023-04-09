@@ -86,6 +86,86 @@ def interpolate_linear_layer(
     return linear_layer_mapped
 
 
+def interpolate_linear_layer_postprocessing(
+    linear_layer, 
+    in_features_new, 
+    input_size,
+    mode: str = 'bilinear'
+):
+    """
+    Special case: 
+        - input is concatenation of [i, a]
+        - output size is same
+    So, we need to split the weight into 2 parts:
+        w1 = weight[:input_size]  # keep as is
+        w2 = weight[input_size:]  # map as usual
+
+    Example with x 2 size multiplier:
+    
+    Weight:
+          i         a
+        |     |           |
+        |     |           |
+      b |     |           |
+        |     |           |
+        |     |           |
+          keep     map
+    
+    Mapped weight:
+          i           2 * a
+        |     |                    |
+        |     |                    |
+      b |     |                    |
+        |     |                    |
+        |     |                    |
+
+    Args:
+        linear_layer (nn.Linear): PyTorch Linear layer whose weights are to be interpolated.
+        in_features_new (int): New input size for the Linear layer.
+        out_features_new (int): New output size for the Linear layer.
+        mode (str): Interpolation mode. Defaults to 'bilinear'.
+    """
+    in_features, out_features = linear_layer.in_features, linear_layer.out_features
+
+    # Extract weight and bias to map from the original linear layer
+    linear_layer_to_map = torch.nn.Linear(
+        in_features - input_size,
+        out_features,
+        bias=(linear_layer.bias is not None)
+    )
+    linear_layer_to_map.weight.data.copy_(linear_layer.weight[:, input_size:])
+    if linear_layer.bias is not None:
+        linear_layer_to_map.bias.data.copy_(linear_layer.bias)
+
+    # Map the weight and bias
+    linear_layer_to_map_mapped = interpolate_linear_layer(
+        linear_layer_to_map, 
+        in_features_new - input_size, 
+        out_features, 
+        mode=mode
+    )
+
+    # Concatenate
+    linear_layer_mapped = torch.nn.Linear(
+        in_features_new,
+        out_features,
+        bias=(linear_layer.bias is not None)
+    )
+    linear_layer_mapped.weight.data.copy_(
+        torch.cat(
+            [
+                linear_layer.weight[:, :input_size],
+                linear_layer_to_map_mapped.weight
+            ], 
+            dim=1
+        )
+    )
+    if linear_layer.bias is not None:
+        linear_layer_mapped.bias.data.copy_(linear_layer_to_map_mapped.bias)
+
+    return linear_layer_mapped
+
+
 def interpolate_batchnorm_layer(batchnorm_layer, num_features_new):
     """
     Performs bilinear interpolation on the weights of a PyTorch BatchNorm layer to obtain a new BatchNorm layer
@@ -147,7 +227,6 @@ def main(args):
         logger.info(f'model from {name}: {param.size()}')
     
     # Model to
-    config['dynedge']['repeat_input'] = int(args.size_multiplier)
     config['dynedge']['dynedge_layer_sizes'] = [
         (int(x * args.size_multiplier), int(y * args.size_multiplier)) 
         for x, y in [(128, 256), (336, 256), (336, 256), (336, 256)]
@@ -165,28 +244,36 @@ def main(args):
     }
 
     for name, module in tqdm(named_modules):
+        logger.info(f'Interpolating {name}...')
+
         # Some layers have same size for any multiplier
         if any((skip_name_contains in name) for skip_name_contains in skip_layers_contains):
-            setattr(model_to, name, module)
-            continue
-
-        if isinstance(module, torch.nn.Linear):
+            module_mapped = module
+        elif isinstance(module, torch.nn.Linear):
             in_features_new = int(args.size_multiplier * module.in_features)
             out_features_new = int(args.size_multiplier * module.out_features)
 
-            # Input layer has same input size
-            if '_gnn._conv_layers.0.nn.0' in name:
-                in_features_new = module.in_features
-            # First postprocessing layer has same output size
-            elif '_gnn._post_processing.0' in name:
-                out_features_new = module.out_features
+            if '_gnn._post_processing.0' in name:
+                # Special case: raw model input + multiple residual connetions
+                input_size = 17
+                in_features_new = int(args.size_multiplier * (module.in_features - input_size)) + input_size
+                out_features_new = out_features_new - input_size
 
-            module_mapped = interpolate_linear_layer(
-                module, 
-                in_features_new, 
-                out_features_new
-            )
-            setattr(model_to, name, module_mapped)
+                module_mapped = interpolate_linear_layer_postprocessing(
+                    module, 
+                    in_features_new, 
+                    input_size
+                )
+            else:
+                # Input layer has same input size
+                if '_gnn._conv_layers.0.nn.0' in name:
+                    in_features_new = module.in_features
+
+                module_mapped = interpolate_linear_layer(
+                    module, 
+                    in_features_new, 
+                    out_features_new
+                )
         elif isinstance(module, torch.nn.BatchNorm1d):
             num_features = int(args.size_multiplier * module.num_features)
             if '_gnn._post_processing.0' in name:
@@ -196,7 +283,10 @@ def main(args):
                 module, 
                 num_features
             )
-            setattr(model_to, name, module_mapped)
+        else:
+            continue
+        
+        setattr(model_to, name, module_mapped)
 
     # Validate loading
     state_dict = model_to.state_dict()
