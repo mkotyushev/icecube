@@ -905,39 +905,44 @@ class BlockBatchNorm1d(Module):
 
 def permute_cat_block_output(x, n_cat, block_sizes):
     """Permute output of cat blocks
-                               <--- n_blocks --->
-        |b0_c0, b0_c1, ..., b0_cN|b1_c0, b1_c1, ..., b1_cN|...|bM_c0, bM_c1, ..., bM_cN|
-        to 
                                <--- n_cats --->
         |b0_c0, b1_c0, ..., bM_c0|b0_c1, b1_c1, ..., bM_c1|...|b0_cN, b1_cN, ..., bM_cN|
+        to 
+                               <--- n_blocks --->
+        |b0_c0, b0_c1, ..., b0_cN|b1_c0, b1_c1, ..., b1_cN|...|bM_c0, bM_c1, ..., bM_cN|
     """
-    # x is (batch_size, sum(ith block_size) * n_cat)
+    # x is (batch_size, n_cat * sum(ith block_size))
 
-    # list of (batch_size, n_cat * ith block_size) 
-    # tensors with len n_blocks
+    # block_size here is n_cat * ith block_size of previous layer
+    block_sizes_before_cat = [block_size // n_cat for block_size in block_sizes]
+
+    # list of (batch_size, sum(ith block_size)) 
+    # tensors with len n_cat
     x = torch.split(
         x, 
-        # block_size here is n_cat * ith block_size of previous layer
-        [block_size for block_size in block_sizes], 
+        x.shape[1] // n_cat, 
         dim=1
     )
 
     # list of lists of (batch_size, ith block_size) tensors 
-    # with len n_blocks and len n_cat
-    x = [torch.split(x_, x_.shape[1] // n_cat, dim=1) for x_ in x]
+    # with len n_cat and len n_blocks
+    x = [torch.split(x_, block_sizes_before_cat, dim=1) for x_ in x]
 
-    # list of (n_cat * n_blocks) tensors with len n_blocks
+    # list of (n_blocks * n_cat) tensors with len n_blocks
     x = [torch.cat(x_, dim=1) for x_ in zip(*x)]
 
-    # (batch_size, n_cat * sum(ith block_size))
+    # (batch_size, sum(ith block_size) * n_cat)
     x = torch.cat(x, dim=1)  
 
     return x
 
 
-def pre_input_dummy(x, block_sizes):
+def pre_input_dummy(x, block_sizes, message=''):
     """Dummy view for pre-input"""
     torch.set_printoptions(profile="full")
+    if message:
+        print(message)
+    print(x[0].shape)
     print(x[0])
     torch.set_printoptions(profile="default") # reset
     return x
@@ -945,30 +950,32 @@ def pre_input_dummy(x, block_sizes):
 
 def edgeconv_input_view(x, block_sizes):
     """View for edgeconv input"""
-    # x = pre_input_dummy(x, sum(ith block_size))
-    return permute_cat_block_output(x, 2, block_sizes)
-
+    # x = pre_input_dummy(x, block_sizes, message='edgeconv_input_view pre')
+    x = permute_cat_block_output(x, 2, block_sizes)
+    # x = pre_input_dummy(x, block_sizes, message='edgeconv_input_view post')
+    return x
 
 len_in_features = 17
 def postprocessing_input_view(x, block_sizes):
     """View for postprocessing input"""
-    # x = pre_input_dummy(x, sum(ith block_size))
+    # x = pre_input_dummy(x, block_sizes, message='postprocessing_input_view pre')
 
-    # torch.set_printoptions(profile="full")
-    # print(x[0])
     block_sizes = (block_sizes[0] - len_in_features, *block_sizes[1:])
     x_to_permute = x[:, len_in_features:]
     x_to_permute = permute_cat_block_output(x_to_permute, 4, block_sizes)
     x = torch.cat([x[:, :len_in_features], x_to_permute], dim=1)
-    # print(x[0])
-    # torch.set_printoptions(profile="default") # reset
+    
+    # x = pre_input_dummy(x, block_sizes, message='postprocessing_input_view post')
+    
     return x
 
 
 def readout_input_view(x, block_sizes):
     """View for readout input"""
-    # x = pre_input_dummy(x, sum(ith block_size))
-    return permute_cat_block_output(x, 3, block_sizes)
+    # x = pre_input_dummy(x, block_sizes, message='readout_input_view pre')
+    x = permute_cat_block_output(x, 3, block_sizes)
+    # x = pre_input_dummy(x, block_sizes, message='readout_input_view post')
+    return x
 
 
 def print_layer_norms(model):
@@ -1092,7 +1099,7 @@ def train_dynedge_blocks(
                 with torch.no_grad():
                     module.add_block(
                         num_features_block=num_features_block,
-                        init='zero' if config['block']['zero_new'] else 'default'
+                        init='default'
                     )
         
         print_layer_norms(model)
