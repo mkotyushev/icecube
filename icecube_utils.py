@@ -69,11 +69,11 @@ class ExpLRSchedulerPiece:
     
 
 class ConstLRSchedulerPiece:
-    def __init__(self, lr):
-        self.lr = lr
+    def __init__(self, start_lr):
+        self.start_lr = start_lr
 
     def __call__(self, pct):
-        return self.lr
+        return self.start_lr
     
 
 class LinearLRSchedulerPiece:
@@ -639,7 +639,34 @@ def calculate_angular_error(df : pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-class BlockLinear(Module):
+# Common parts of BlockLinear and BlockBatchNorm1d
+class BlockModule(Module):
+    """Base class for block modules"""
+    def freeze_first_n_blocks(self, n: int):
+        """Freezes first n blocks"""
+        for i, block in enumerate(self.blocks):
+            if i < n:
+                for param in block.parameters():
+                    param.requires_grad = False
+        return self
+
+    def freeze_except_last_block(self):
+        """Freezes all blocks except last"""
+        self.freeze_first_n_blocks(len(self.blocks) - 1)
+        return self
+
+    def up_to_last_block_parameters(self):
+        for i, block in enumerate(self.blocks):
+            if i < len(self.blocks) - 1:
+                for param in block.parameters():
+                    yield param
+
+    def last_block_parameters(self):
+        for param in self.blocks[-1].parameters():
+            yield param
+
+
+class BlockLinear(BlockModule):
     output_aggregation = 'sum'
 
     """Block linear layer"""
@@ -675,9 +702,9 @@ class BlockLinear(Module):
         self.type = type
         self.input_transform = input_transform
         
-        self.linears = ModuleList()
+        self.blocks = ModuleList()
         for block_size in block_sizes:
-            self.linears.append(
+            self.blocks.append(
                 Linear(
                     block_size[0], 
                     block_size[1], 
@@ -691,12 +718,12 @@ class BlockLinear(Module):
         if type == 'input':
             assert all(
                 linear.in_features == self.in_features 
-                for linear in self.linears
+                for linear in self.blocks
             )
         elif type == 'output':
             assert all(
                 linear.out_features == self.out_features 
-                for linear in self.linears
+                for linear in self.blocks
             )
         self.type = type
         return self
@@ -707,28 +734,14 @@ class BlockLinear(Module):
 
     @property
     def bias(self):
-        if self.linears[0].bias is None:
+        if self.blocks[0].bias is None:
             return None
-        return torch.cat([linear.bias for linear in self.linears], dim=0)
+        return torch.cat([linear.bias for linear in self.blocks], dim=0)
     
     @property
     def weight(self):
-        return torch.block_diag(*[linear.weight for linear in self.linears])
+        return torch.block_diag(*[linear.weight for linear in self.blocks])
     
-    def freeze_first_n_blocks(self, n: int):
-        """Freezes first n blocks"""
-        for i, linear in enumerate(self.linears):
-            if i < n:
-                linear.weight.requires_grad = False
-                if linear.bias is not None:
-                    linear.bias.requires_grad = False
-        return self
-
-    def freeze_except_last_block(self):
-        """Freezes all blocks except last"""
-        self.freeze_first_n_blocks(len(self.linears) - 1)
-        return self
-
     def add_block(self, in_features_block: int, out_features_block: int, init: str = 'default'):
         """Adds a new block"""
         assert init in ['default', 'zero'], \
@@ -738,15 +751,15 @@ class BlockLinear(Module):
             in_features_block, 
             out_features_block, 
             bias=self.bias is not None,
-            device=self.linears[0].weight.device,
-            dtype=self.linears[0].weight.dtype
+            device=self.blocks[0].weight.device,
+            dtype=self.blocks[0].weight.dtype
         )
-        self.linears.append(linear)
+        self.blocks.append(linear)
 
         # # Re-normalize weights of existing blocks
-        # scale = (len(self.linears) - 1) / len(self.linears)
+        # scale = (len(self.blocks) - 1) / len(self.blocks)
         # with torch.no_grad():
-        #     for linear in self.linears[:-1]:
+        #     for linear in self.blocks[:-1]:
         #         linear.weight.data *= scale
         #         if linear.bias is not None:
         #             linear.bias.data *= scale
@@ -773,25 +786,25 @@ class BlockLinear(Module):
             with torch.no_grad():
                 x = self.input_transform(
                     x, 
-                    [linear.in_features for linear in self.linears]
+                    [linear.in_features for linear in self.blocks]
                 )
         
         # stacked horizontally
         if self.type == 'input':
             assert x.shape[1] == self.in_features
-            x = [linear(x) for linear in self.linears]
+            x = [linear(x) for linear in self.blocks]
             x = torch.cat(x, dim=1)
         # stacked vertically
         elif self.type == 'output':
-            in_sizes = [linear.in_features for linear in self.linears]
+            in_sizes = [linear.in_features for linear in self.blocks]
             assert x.shape[1] == sum(in_sizes)
             assert all(
-                linear.out_features == self.linears[0].out_features 
-                for linear in self.linears
+                linear.out_features == self.blocks[0].out_features 
+                for linear in self.blocks
             )
             x = torch.split(x, in_sizes, dim=1)
-            assert len(x) == len(self.linears)
-            x = torch.stack([linear(x_) for linear, x_ in zip(self.linears, x)], dim=0)
+            assert len(x) == len(self.blocks)
+            x = torch.stack([linear(x_) for linear, x_ in zip(self.blocks, x)], dim=0)
             if BlockLinear.output_aggregation == 'mean':
                 x = torch.mean(x, dim=0)
             elif BlockLinear.output_aggregation == 'sum':
@@ -803,18 +816,18 @@ class BlockLinear(Module):
                 )
         # block-diagonal
         else:
-            in_sizes = [linear.in_features for linear in self.linears]
+            in_sizes = [linear.in_features for linear in self.blocks]
             assert x.shape[1] == sum(in_sizes), \
                 f"x.shape[1] ({x.shape[1]}) must be equal to sum(in_sizes) ({sum(in_sizes)})"
             x = torch.split(x, in_sizes, dim=1)
-            assert len(x) == len(self.linears), \
-                f"len(x) ({len(x)}) must be equal to len(self.linears) ({len(self.linears)})"
-            x = [linear(x_) for linear, x_ in zip(self.linears, x)]
+            assert len(x) == len(self.blocks), \
+                f"len(x) ({len(x)}) must be equal to len(self.blocks) ({len(self.blocks)})"
+            x = [linear(x_) for linear, x_ in zip(self.blocks, x)]
             x = torch.cat(x, dim=1)
         return x
 
 
-class BlockBatchNorm1d(Module):
+class BlockBatchNorm1d(BlockModule):
     """BatchNorm1d with blocks"""
     def __init__(
         self, 
@@ -842,9 +855,9 @@ class BlockBatchNorm1d(Module):
         self.device = device
         self.dtype = dtype
 
-        self.batchnorms = ModuleList()
+        self.blocks = ModuleList()
         for block_size in block_sizes:
-            self.batchnorms.append(
+            self.blocks.append(
                 BatchNorm1d(
                     block_size, 
                     eps=eps, 
@@ -870,7 +883,7 @@ class BlockBatchNorm1d(Module):
             device=self.device,
             dtype=self.dtype
         )
-        self.batchnorms.append(batchnorm)
+        self.blocks.append(batchnorm)
 
         self.num_features += num_features_block
 
@@ -890,13 +903,13 @@ class BlockBatchNorm1d(Module):
             f"Input must have {self.num_features} features, got {x.shape[1]}"
         x = torch.split(
             x, 
-            [batchnorm.num_features for batchnorm in self.batchnorms], 
+            [batchnorm.num_features for batchnorm in self.blocks], 
             dim=1
         )
         x = torch.cat(
             [
                 batchnorm(x_) 
-                for batchnorm, x_ in zip(self.batchnorms, x)
+                for batchnorm, x_ in zip(self.blocks, x)
             ], 
             dim=1
         )
@@ -984,6 +997,62 @@ def print_layer_norms(model):
             print(name, torch.norm(module.weight))
 
 
+class BlockStandardModel(StandardModel):
+    def up_to_last_block_parameters(self):
+        for module in self.modules(): 
+            if isinstance(module, BlockModule):
+                yield from module.up_to_last_block_parameters()
+
+    def last_block_parameters(self):
+        for module in self.modules(): 
+            if isinstance(module, BlockModule):
+                yield from module.last_block_parameters()
+
+    def configure_optimizers(self) -> Dict[str, Any]:
+        """Constant rate scheduler & optimizer for blocks up to last
+        and configured scheduler & optimizer for last block."""
+        assert self._scheduler_class is not None
+
+        # Configure optimizer & scheduler 
+        # for all blocks except last
+        up_to_last_scheduler_kwargs = {
+            "milestones": [
+                0,
+                self._scheduler_kwargs["milestones"][-1]
+            ],
+            "pieces": [
+                ConstLRSchedulerPiece(
+                    self._scheduler_kwargs["pieces"][0].start_lr
+                ),
+            ],
+        }
+        optimizer_up_to_last = self._optimizer_class(
+            self.up_to_last_block_parameters(), **self._optimizer_kwargs
+        )
+        scheduler_up_to_last = {
+            "scheduler": self._scheduler_class(
+                optimizer_up_to_last, **up_to_last_scheduler_kwargs
+            ),
+            **self._scheduler_config,
+        }
+
+        # Configure optimizer & scheduler
+        # for last block
+        optimizer_last = self._optimizer_class(
+            self.last_block_parameters(), **self._optimizer_kwargs
+        )
+        scheduler_last = {
+            "scheduler": self._scheduler_class(
+                optimizer_last, **self._scheduler_kwargs
+            ),
+            **self._scheduler_config,
+        }
+
+        return \
+            [optimizer_up_to_last, optimizer_last], \
+            [scheduler_up_to_last, scheduler_last]
+
+
 def train_dynedge_blocks(
     config: Dict[str, Any], 
     n_blocks: int, 
@@ -1001,7 +1070,10 @@ def train_dynedge_blocks(
     labels = {'direction': Direction(azimuth_key=config['truth'][1], zenith_key=config['truth'][0])}
     train_dataloader, validate_dataloader = make_dataloaders(config=config, labels=labels)
     BlockLinear.output_aggregation = config['block']['output_aggregation']
-    with patch('torch.nn.Linear', BlockLinear), patch('torch.nn.BatchNorm1d', BlockBatchNorm1d):
+    with \
+        patch('icecube_utils.StandardModel', BlockStandardModel), \
+        patch('torch.nn.Linear', BlockLinear), \
+        patch('torch.nn.BatchNorm1d', BlockBatchNorm1d):
         model = build_model(config, train_dataloader)
 
     # Load block 0 weights if provided
@@ -1062,7 +1134,7 @@ def train_dynedge_blocks(
             block.num_features
         )
         for name, block in model.named_modules()
-        if isinstance(block, (BlockLinear, BlockBatchNorm1d))
+        if isinstance(block, BlockModule)
     }
     # with torch.no_grad():
     #     model(next(iter(train_dataloader)))
