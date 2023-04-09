@@ -18,7 +18,7 @@ from pytorch_lightning.callbacks import (
 )
 from torch.optim import Adam
 from torch.optim.lr_scheduler import LRScheduler
-from torch.nn import Module, Linear, ModuleList
+from torch.nn import Module, Linear, ModuleList, BatchNorm1d
 from torch import Tensor
 from torch_geometric.data import Data
 from torch_geometric.nn.pool import knn_graph
@@ -729,10 +729,10 @@ class BlockLinear(Module):
         self.freeze_first_n_blocks(len(self.linears) - 1)
         return self
 
-    def add_block(self, in_features_block: int, out_features_block: int, init: str = 'xavier_uniform'):
+    def add_block(self, in_features_block: int, out_features_block: int, init: str = 'default'):
         """Adds a new block"""
-        assert init in ['xavier_uniform', 'zero'], \
-            "init must be one of ['xavier_uniform', 'zero']"
+        assert init in ['default', 'zero'], \
+            "init must be one of ['default', 'zero']"
 
         linear = Linear(
             in_features_block, 
@@ -761,7 +761,7 @@ class BlockLinear(Module):
             linear.weight.data.zero_()
             if linear.bias is not None:
                 linear.bias.data.zero_()
-        elif init == 'xavier_uniform':
+        elif init == 'default':
             # Default initialization is xavier_uniform
             pass
 
@@ -806,6 +806,86 @@ class BlockLinear(Module):
             assert len(x) == len(self.linears)
             x = [linear(x_) for linear, x_ in zip(self.linears, x)]
             x = torch.cat(x, dim=1)
+        return x
+
+
+class BlockBatchNorm1d(Module):
+    """BatchNorm1d with blocks"""
+    def __init__(
+        self, 
+        num_features: int, 
+        block_sizes=None, 
+        eps: float = 1e-5, 
+        momentum: float = 0.1, 
+        affine: bool = True, 
+        track_running_stats: bool = True,
+        device: Optional[Union[str, int, torch.device]] = None,
+        dtype: Optional[torch.dtype] = None
+    ):
+        super().__init__()
+
+        if block_sizes is None:
+            block_sizes = [num_features]
+        assert sum(block_size for block_size in block_sizes) == num_features, \
+            "Sum of num features of all blocks must be equal to num_features"
+
+        self.num_features = num_features
+        self.eps = eps
+        self.momentum = momentum
+        self.affine = affine
+        self.track_running_stats = track_running_stats
+        self.device = device
+        self.dtype = dtype
+
+        self.batchnorms = ModuleList()
+        for block_size in range(block_sizes):
+            self.batchnorms.append(
+                BatchNorm1d(
+                    block_size, 
+                    eps=eps, 
+                    momentum=momentum, 
+                    affine=affine, 
+                    track_running_stats=track_running_stats,
+                    device=device,
+                    dtype=dtype
+                )
+            )
+
+    def add_block(self, num_features_block: int, init: str = 'default'):
+        """Adds a new block"""
+        assert init in ['default', 'zero'], \
+            "init must be one of ['default', 'zero']"
+
+        batchnorm = BatchNorm1d(
+            num_features_block, 
+            eps=self.eps, 
+            momentum=self.momentum, 
+            affine=self.affine, 
+            track_running_stats=self.track_running_stats,
+            device=self.device,
+            dtype=self.dtype
+        )
+        self.batchnorms.append(batchnorm)
+
+        self.num_features += num_features_block
+
+        # Reinitialize added layer weights to match current in_features
+        # Note: bias initialization is zero by default
+        if init == 'zero':
+            batchnorm.weight.data.zero_()
+        elif init == 'default':
+            # Default initialization is uniform 0, 1
+            pass
+
+        return self
+
+    def forward(self, x: Tensor) -> Tensor:
+        """Forward pass"""
+        assert x.shape[1] == self.num_features * self.num_blocks
+        x = torch.split(x, self.num_features, dim=1)
+        assert len(x) == len(self.batchnorms)
+        x = torch.stack([batchnorm(x_) for batchnorm, x_ in zip(self.batchnorms, x)], dim=0)
+        x = torch.cat(x, dim=1)
         return x
 
 
@@ -872,8 +952,8 @@ def train_dynedge_blocks(
     # Build empty block model
     labels = {'direction': Direction(azimuth_key=config['truth'][1], zenith_key=config['truth'][0])}
     train_dataloader, validate_dataloader = make_dataloaders(config=config, labels=labels)
-    BlockLinear.output_aggregation = config['block_output_aggregation']
-    with patch('torch.nn.Linear', BlockLinear):
+    BlockLinear.output_aggregation = config['block']['output_aggregation']
+    with patch('torch.nn.Linear', BlockLinear), patch('torch.nn.BatchNorm1d', BlockBatchNorm1d):
         model = build_model(config, train_dataloader)
 
     # Load block 0 weights if provided
@@ -906,13 +986,6 @@ def train_dynedge_blocks(
             str(model_save_dir / 'state_dict_n_blocks_1.pth')
         )
 
-    # Set initial sizes to add blocks of these sizes
-    initial_linear_block_sizes = {
-        name: (module.in_features, module.out_features) 
-        for name, module in model.named_modules()
-        if isinstance(module, BlockLinear)
-    }
-
     # Set input and output blocks types (handled differently)
     for name, module in model.named_modules(): 
         if isinstance(module, BlockLinear):
@@ -941,21 +1014,21 @@ def train_dynedge_blocks(
     for i in range(n_blocks - 1):
         print_layer_norms(model)
 
-        # Add block and freeze all the previous blocks
+        # Add block
         for name, module in model.named_modules(): 
             if isinstance(module, BlockLinear):
-                in_features_block, out_features_block = initial_linear_block_sizes[name]
-                
-                if name == '_gnn._post_processing.0':
-                    in_features_block = in_features_block - 17
-                
                 with torch.no_grad():
                     module.add_block(
-                        in_features_block=in_features_block, 
-                        out_features_block=out_features_block,
-                        init='zero' if config['zero_new_block'] else 'xavier_uniform'
+                        in_features_block=config['block']['new_block_size'], 
+                        out_features_block=config['block']['new_block_size'],
+                        init='zero' if config['block']['zero_new'] else 'default'
                     )
-                    module.freeze_except_last_block()
+            elif isinstance(module, BlockBatchNorm1d):
+                with torch.no_grad():
+                    module.add_block(
+                        num_features_block=config['block']['new_block_size'],
+                        init='zero' if config['block']['zero_new'] else 'default'
+                    )
         
         print_layer_norms(model)
         

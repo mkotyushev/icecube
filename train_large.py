@@ -56,7 +56,7 @@ def parse_args():
     parser.add_argument('--enable-augmentations', action='store_true')
     parser.add_argument('--lr-onecycle-factors', type=float, nargs=3, default=[1e-02, 1, 1e-02])
     parser.add_argument('--lr-schedule-type', type=str, default='linear', choices=['linear', 'exp', 'cos'])
-    parser.add_argument('--train-mode', type=str, default='default', choices=['default', 'blocks', 'simplex'])
+    parser.add_argument('--train-mode', type=str, default='default', choices=['default', 'block', 'simplex'])
     parser.add_argument('--bn', action='store_true')
     parser.add_argument('--dropout', type=float, required=False, default=None)
     args = parser.parse_args()
@@ -169,8 +169,11 @@ config = {
             'max_n_pulses_strategy': 'clamp'
         },
         'loss_weight': {},
-        'zero_new_block': False,
-        'block_output_aggregation': 'sum',
+        'block': {
+            'zero_new': True,
+            'output_aggregation': 'sum',
+            'new_block_size': 32,
+        },
         'train_transforms': [],
         'val_transforms': [],
         'simplex': {
