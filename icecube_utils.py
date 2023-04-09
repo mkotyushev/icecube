@@ -402,6 +402,7 @@ def build_model(
         scheduler_config={
             "interval": "step",
         },
+        **config["model_kwargs"],
     )
     model.prediction_columns = prediction_columns
     model.additional_attributes = additional_attributes
@@ -526,9 +527,6 @@ def train_dynedge(
     # Training model
     default_callbacks = [
         LearningRateMonitor(logging_interval="step"),
-        GradientAccumulationScheduler(
-            scheduling={0: config['accumulate_grad_batches']}
-        ),
         EarlyStopping(
             monitor="val_loss",
             patience=config["early_stopping_patience"],
@@ -998,6 +996,55 @@ def print_layer_norms(model):
 
 
 class BlockStandardModel(StandardModel):
+    def __init__(self, *args, **kwargs):
+        # Explicit gradient clipping params are required
+        # for manual optimmization
+        self.gradient_clip_val = kwargs.pop('gradient_clip_val', None)
+        self.gradient_clip_algorithm = kwargs.pop('gradient_clip_algorithm', None)
+
+        super().__init__(*args, **kwargs)
+
+        # Disable automatic optimization: not supported
+        # for multiple optimizers
+        self.automatic_optimization = False
+    
+    def training_step(self, train_batch: Data, batch_idx: int) -> Tensor:
+        """Perform training step."""
+        # Get loss
+        loss = super().training_step(train_batch, batch_idx)
+
+        # Get optimizers and schedulers
+        optimizer_up_to_last, optimizer_last = self.optimizers()
+        scheduler_up_to_last, scheduler_last = self.lr_schedulers()
+        
+        # Zero gradients
+        optimizer_up_to_last.zero_grad()
+        optimizer_last.zero_grad()
+
+        # Backward pass
+        self.manual_backward(loss)
+
+        # Clip gradients
+        if self.gradient_clip_val is not None:
+            self.clip_gradients(
+                optimizer_up_to_last, 
+                gradient_clip_val=self.gradient_clip_val, 
+                gradient_clip_algorithm=self.gradient_clip_algorithm
+            )
+            self.clip_gradients(
+                optimizer_last, 
+                gradient_clip_val=self.gradient_clip_val, 
+                gradient_clip_algorithm=self.gradient_clip_algorithm
+            )
+
+        # Update weights
+        optimizer_up_to_last.step()
+        optimizer_last.step()
+
+        # Update learning rate
+        scheduler_up_to_last.step()
+        scheduler_last.step()
+
     def up_to_last_block_parameters(self):
         for module in self.modules(): 
             if isinstance(module, BlockModule):
@@ -1154,9 +1201,9 @@ def train_dynedge_blocks(
                 out_features_block = int(out_features_block * config['block']['block_size_scale'])
 
                 if module.type == 'input':
-                    in_features_block = module.linears[0].in_features
+                    in_features_block = module.blocks[0].in_features
                 elif module.type == 'output':
-                    out_features_block = module.linears[0].out_features
+                    out_features_block = module.blocks[0].out_features
 
                 with torch.no_grad():
                     module.add_block(

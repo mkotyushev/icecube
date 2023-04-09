@@ -36,7 +36,6 @@ def parse_args():
     parser.add_argument('--max-epochs', type=float, default=10)
     parser.add_argument('--size-multiplier', type=float, default=1.0)
     parser.add_argument('--batch-size', type=int, default=100)
-    parser.add_argument('--accumulate-grad-batches', type=int, default=1)
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument(
         '--loss-weight-strategy', 
@@ -128,7 +127,6 @@ config = {
         "index_column": 'event_id',
         "run_name_tag": 'my_example',
         "batch_size": 100,
-        "accumulate_grad_batches": 1,
         "num_workers": 10,
         # "target": 'zenith',
         # "target": 'angles_sincos_euclidean',
@@ -197,7 +195,6 @@ if __name__ == '__main__':
 
     config['train_mode'] = args.train_mode
     config['batch_size'] = args.batch_size
-    config['accumulate_grad_batches'] = args.accumulate_grad_batches
     config['dynedge']['dynedge_layer_sizes'] = [
         (int(x * args.size_multiplier), int(y * args.size_multiplier)) 
         for x, y in [(128, 256), (336, 256), (336, 256), (336, 256)]
@@ -349,6 +346,13 @@ if __name__ == '__main__':
     
     if args.train_mode == 'block':
         assert args.n_blocks is not None
+        
+        # Gradient clipping is model kwargs due to manual optimization
+        config['model_kwargs'] = dict()
+        config['model_kwargs']['gradient_clip_val'] = config['fit']['gradient_clip_val']
+        config['model_kwargs']['gradient_clip_algorithm'] = config['fit']['gradient_clip_algorithm']
+        del config['fit']['gradient_clip_val'], config['fit']['gradient_clip_algorithm']
+    
         config['fit']['distribution_strategy'] = 'auto'
         model = train_dynedge_blocks(
             config, 
