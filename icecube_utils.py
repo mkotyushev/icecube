@@ -771,7 +771,10 @@ class BlockLinear(Module):
         """Forward pass"""
         if self.input_transform is not None:
             with torch.no_grad():
-                x = self.input_transform(x, len(self.linears))
+                x = self.input_transform(
+                    x, 
+                    [linear.in_features for linear in self.linears]
+                )
         
         # stacked horizontally
         if self.type == 'input':
@@ -801,9 +804,11 @@ class BlockLinear(Module):
         # block-diagonal
         else:
             in_sizes = [linear.in_features for linear in self.linears]
-            assert x.shape[1] == sum(in_sizes)
+            assert x.shape[1] == sum(in_sizes), \
+                f"x.shape[1] ({x.shape[1]}) must be equal to sum(in_sizes) ({sum(in_sizes)})"
             x = torch.split(x, in_sizes, dim=1)
-            assert len(x) == len(self.linears)
+            assert len(x) == len(self.linears), \
+                f"len(x) ({len(x)}) must be equal to len(self.linears) ({len(self.linears)})"
             x = [linear(x_) for linear, x_ in zip(self.linears, x)]
             x = torch.cat(x, dim=1)
         return x
@@ -838,7 +843,7 @@ class BlockBatchNorm1d(Module):
         self.dtype = dtype
 
         self.batchnorms = ModuleList()
-        for block_size in range(block_sizes):
+        for block_size in block_sizes:
             self.batchnorms.append(
                 BatchNorm1d(
                     block_size, 
@@ -881,22 +886,56 @@ class BlockBatchNorm1d(Module):
 
     def forward(self, x: Tensor) -> Tensor:
         """Forward pass"""
-        assert x.shape[1] == self.num_features * self.num_blocks
-        x = torch.split(x, self.num_features, dim=1)
-        assert len(x) == len(self.batchnorms)
-        x = torch.stack([batchnorm(x_) for batchnorm, x_ in zip(self.batchnorms, x)], dim=0)
-        x = torch.cat(x, dim=1)
+        assert x.shape[1] == self.num_features, \
+            f"Input must have {self.num_features} features, got {x.shape[1]}"
+        x = torch.split(
+            x, 
+            [batchnorm.num_features for batchnorm in self.batchnorms], 
+            dim=1
+        )
+        x = torch.cat(
+            [
+                batchnorm(x_) 
+                for batchnorm, x_ in zip(self.batchnorms, x)
+            ], 
+            dim=1
+        )
         return x
 
 
-def permute_cat_block_output(x, n_cat, n_blocks):
-    """Permute output of cat blocks"""
-    return x.reshape(
-        x.shape[0], n_cat, n_blocks, -1
-    ).permute(0, 2, 1, 3).reshape(x.shape[0], x.shape[1])
+def permute_cat_block_output(x, n_cat, block_sizes):
+    """Permute output of cat blocks
+                               <--- n_blocks --->
+        |b0_c0, b0_c1, ..., b0_cN|b1_c0, b1_c1, ..., b1_cN|...|bM_c0, bM_c1, ..., bM_cN|
+        to 
+                               <--- n_cats --->
+        |b0_c0, b1_c0, ..., bM_c0|b0_c1, b1_c1, ..., bM_c1|...|b0_cN, b1_cN, ..., bM_cN|
+    """
+    # x is (batch_size, sum(ith block_size) * n_cat)
+
+    # list of (batch_size, n_cat * ith block_size) 
+    # tensors with len n_blocks
+    x = torch.split(
+        x, 
+        # block_size here is n_cat * ith block_size of previous layer
+        [block_size for block_size in block_sizes], 
+        dim=1
+    )
+
+    # list of lists of (batch_size, ith block_size) tensors 
+    # with len n_blocks and len n_cat
+    x = [torch.split(x_, x_.shape[1] // n_cat, dim=1) for x_ in x]
+
+    # list of (n_cat * n_blocks) tensors with len n_blocks
+    x = [torch.cat(x_, dim=1) for x_ in zip(*x)]
+
+    # (batch_size, n_cat * sum(ith block_size))
+    x = torch.cat(x, dim=1)  
+
+    return x
 
 
-def pre_input_dummy(x, n_blocks):
+def pre_input_dummy(x, block_sizes):
     """Dummy view for pre-input"""
     torch.set_printoptions(profile="full")
     print(x[0])
@@ -904,30 +943,32 @@ def pre_input_dummy(x, n_blocks):
     return x
 
 
-def edgeconv_input_view(x, n_blocks):
+def edgeconv_input_view(x, block_sizes):
     """View for edgeconv input"""
-    # x = pre_input_dummy(x, n_blocks)
-    return permute_cat_block_output(x, 2, n_blocks)
+    # x = pre_input_dummy(x, sum(ith block_size))
+    return permute_cat_block_output(x, 2, block_sizes)
 
 
-def postprocessing_input_view(x, n_blocks):
+len_in_features = 17
+def postprocessing_input_view(x, block_sizes):
     """View for postprocessing input"""
-    # x = pre_input_dummy(x, n_blocks)
+    # x = pre_input_dummy(x, sum(ith block_size))
 
     # torch.set_printoptions(profile="full")
     # print(x[0])
-    x_to_permute = x[:, 17:]
-    x_to_permute = permute_cat_block_output(x_to_permute, 4, n_blocks)
-    x = torch.cat([x[:, :17], x_to_permute], dim=1)
+    block_sizes = (block_sizes[0] - len_in_features, *block_sizes[1:])
+    x_to_permute = x[:, len_in_features:]
+    x_to_permute = permute_cat_block_output(x_to_permute, 4, block_sizes)
+    x = torch.cat([x[:, :len_in_features], x_to_permute], dim=1)
     # print(x[0])
     # torch.set_printoptions(profile="default") # reset
     return x
 
 
-def readout_input_view(x, n_blocks):
+def readout_input_view(x, block_sizes):
     """View for readout input"""
-    # x = pre_input_dummy(x, n_blocks)
-    return permute_cat_block_output(x, 3, n_blocks)
+    # x = pre_input_dummy(x, sum(ith block_size))
+    return permute_cat_block_output(x, 3, block_sizes)
 
 
 def print_layer_norms(model):
@@ -989,44 +1030,68 @@ def train_dynedge_blocks(
     # Set input and output blocks types (handled differently)
     for name, module in model.named_modules(): 
         if isinstance(module, BlockLinear):
-            if name == '_gnn._conv_layers.0.nn.0':
+            if name == '_gnn._conv_layers.0.nn.0.linear':
                 module.set_type('input')
             elif name.startswith('_tasks') and name.endswith('_affine'):
                 module.set_type('output')
             
-            if name == '_gnn._post_processing.0':
+            if name == '_gnn._post_processing.0.linear':
                 module.set_input_transform(postprocessing_input_view)
             elif (
-                name != '_gnn._conv_layers.0.nn.0' and 
+                name != '_gnn._conv_layers.0.nn.0.linear' and 
                 '_gnn._conv_layers' in name and 
-                'nn.0' in name
+                'nn.0.linear' in name
             ):
                 module.set_input_transform(edgeconv_input_view)
-            elif name == '_gnn._readout.0':
+            elif name == '_gnn._readout.0.linear':
                 module.set_input_transform(readout_input_view)
             # else:
             #     module.set_input_transform(pre_input_dummy)
     
+    initial_block_sizes = {
+        name: (
+            (block.in_features, block.out_features)
+            if isinstance(block, BlockLinear) else
+            block.num_features
+        )
+        for name, block in model.named_modules()
+        if isinstance(block, (BlockLinear, BlockBatchNorm1d))
+    }
     # with torch.no_grad():
     #     model(next(iter(train_dataloader)))
 
     # Train n_blocks - 1 blocks additionaly to first one
     for i in range(n_blocks - 1):
-        print_layer_norms(model)
-
         # Add block
         for name, module in model.named_modules(): 
             if isinstance(module, BlockLinear):
+                in_features_block, out_features_block = \
+                    initial_block_sizes[name]
+                
+                if name == '_gnn._post_processing.0.linear':
+                    in_features_block = in_features_block - len_in_features
+
+                in_features_block = int(in_features_block * config['block']['block_size_scale'])
+                out_features_block = int(out_features_block * config['block']['block_size_scale'])
+
+                if module.type == 'input':
+                    in_features_block = module.linears[0].in_features
+                elif module.type == 'output':
+                    out_features_block = module.linears[0].out_features
+
                 with torch.no_grad():
                     module.add_block(
-                        in_features_block=config['block']['new_block_size'], 
-                        out_features_block=config['block']['new_block_size'],
+                        in_features_block=in_features_block, 
+                        out_features_block=out_features_block,
                         init='zero' if config['block']['zero_new'] else 'default'
                     )
             elif isinstance(module, BlockBatchNorm1d):
+                num_features_block = initial_block_sizes[name]
+                num_features_block = int(num_features_block * config['block']['block_size_scale'])
+
                 with torch.no_grad():
                     module.add_block(
-                        num_features_block=config['block']['new_block_size'],
+                        num_features_block=num_features_block,
                         init='zero' if config['block']['zero_new'] else 'default'
                     )
         

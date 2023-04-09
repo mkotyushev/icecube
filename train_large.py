@@ -172,7 +172,7 @@ config = {
         'block': {
             'zero_new': True,
             'output_aggregation': 'sum',
-            'new_block_size': 32,
+            'block_size_scale': 0.5,
         },
         'train_transforms': [],
         'val_transforms': [],
