@@ -30,9 +30,31 @@ from graphnet.models.components.layers import DynEdgeConv
 from graphnet.models.detector.icecube import IceCubeKaggle
 from graphnet.models.gnn import DynEdge
 from graphnet.models.graph_builders import KNNGraphBuilder
-from graphnet.models.task.reconstruction import AngleReconstructionCos, AngleReconstructionSinCos, AngleReconstructionSincosWithKappa, AzimuthReconstruction, AzimuthReconstructionWithKappa, DirectionReconstruction, DirectionReconstructionWithKappa, ZenithAzimuthReconstruction, ZenithReconstructionWithKappa
+from graphnet.models.task.reconstruction import (
+    AngleReconstructionCos, 
+    AngleReconstructionSinCos, 
+    AngleReconstructionSincosWithKappa, 
+    AzimuthReconstruction, 
+    AzimuthReconstructionWithKappa, 
+    DirectionReconstruction,
+    DirectionReconstructionWithKappa, 
+    ZenithAzimuthReconstruction, 
+    ZenithReconstructionWithKappa,
+    S2AbsDirectionReconstruction,
+    S2SignDirectionReconstruction
+)
 from graphnet.training.callbacks import ProgressBar
-from graphnet.training.loss_functions import CosineLoss, CosineLoss3D, EuclidianDistanceLossCos, EuclidianDistanceLossSinCos, VonMisesFisher2DLoss, VonMisesFisher2DLossSinCos, VonMisesFisher3DLoss
+from graphnet.training.loss_functions import (
+    CosineLoss, 
+    CosineLoss3D, 
+    EuclidianDistanceLossCos, 
+    EuclidianDistanceLossSinCos, 
+    VonMisesFisher2DLoss, 
+    VonMisesFisher2DLossSinCos, 
+    VonMisesFisher3DLoss,
+    S2AbsCosineLoss,
+    S2SignCrossEntropyLoss
+)
 from graphnet.training.labels import Direction
 from graphnet.training.utils import make_dataloader
 from graphnet.utilities.logging import get_logger
@@ -205,6 +227,40 @@ def build_model(
                               config["target"] + "_z", 
                               config["target"] + "_kappa" ]
         additional_attributes = ['zenith', 'azimuth', 'event_id']
+    elif config["target"] == 's2':
+        task = S2AbsDirectionReconstruction(
+            hidden_size=gnn.nb_outputs,
+            target_labels=config["target"],
+            loss_function=S2AbsCosineLoss(),
+            loss_weight='loss_weight' if config['loss_weight'] else None,
+            bias=config['dynedge']['bias'],
+            fix_points=fix_points,
+        )
+        tasks.append(task)
+        task = S2SignDirectionReconstruction(
+            hidden_size=gnn.nb_outputs,
+            target_labels=config["target"],
+            loss_function=S2SignCrossEntropyLoss(),
+            loss_weight='loss_weight' if config['loss_weight'] else None,
+            bias=config['dynedge']['bias'],
+            fix_points=fix_points,
+        )
+        tasks.append(task)
+        prediction_columns = [
+            config["target"] + "abs_x", 
+            config["target"] + "abs_y", 
+            config["target"] + "abs_z",
+            config["target"] + "sign_0_logit",
+            config["target"] + "sign_1_logit",
+            config["target"] + "sign_2_logit",
+            config["target"] + "sign_3_logit",
+            config["target"] + "sign_4_logit",
+            config["target"] + "sign_5_logit",
+            config["target"] + "sign_6_logit",
+            config["target"] + "sign_7_logit",
+        ]
+        additional_attributes = ['zenith', 'azimuth', 'event_id']
+
     elif config["target"] == 'angles_legacy':
         task = ZenithReconstructionWithKappa(
             hidden_size=gnn.nb_outputs,
