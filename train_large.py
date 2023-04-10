@@ -11,6 +11,7 @@ from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.profilers import AdvancedProfiler
 from pytorch_lightning.strategies.ddp import DDPStrategy
 from graphnet.data.sqlite.sqlite_dataset import SQLiteDataset
+from lion_pytorch import Lion
 
 from icecube_utils import (
     CancelAzimuthByPredictionTransform,
@@ -58,6 +59,7 @@ def parse_args():
     parser.add_argument('--train-mode', type=str, default='default', choices=['default', 'block', 'simplex'])
     parser.add_argument('--bn', action='store_true')
     parser.add_argument('--dropout', type=float, required=False, default=None)
+    parser.add_argument('--optim', type=str, default='adamw', choices=['sgd', 'adam', 'adamw', 'lion'])
     args = parser.parse_args()
     return args
 
@@ -193,6 +195,29 @@ config = {
 if __name__ == '__main__':
     args = parse_args()
     seed_everything(args.seed)
+
+    if args.optim == 'sgd':
+        config['optimizer_class'] = torch.optim.SGD
+        config['optimizer_kwargs'] = {
+            "lr": 1e-03, 
+        }
+    elif args.optim == 'adam':
+        config['optimizer_class'] = torch.optim.Adam
+        config['optimizer_kwargs'] = {
+            "lr": 1e-03, 
+        }
+    elif args.optim == 'adamw':
+        config['optimizer_class'] = torch.optim.AdamW
+        config['optimizer_kwargs'] = {
+            "lr": 1e-03, 
+            "eps": 1e-03, 
+        }
+    elif args.optim == 'lion':
+        config['optimizer_class'] = Lion
+        config['optimizer_kwargs'] = {
+            "lr": 1e-03, 
+            "use_triton": False
+        }
 
     config['train_mode'] = args.train_mode
     config['batch_size'] = args.batch_size
