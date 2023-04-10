@@ -71,6 +71,7 @@ def parse_args():
             'zenith'
         ]
     )
+    parser.add_argument('--verbose', action='store_true')
     args = parser.parse_args()
     return args
 
@@ -204,6 +205,9 @@ config = {
 if __name__ == '__main__':
     args = parse_args()
     seed_everything(args.seed)
+
+    if args.verbose:
+        config['model_kwargs']['log_grad_norm_verbose'] = True
 
     config['target'] = args.target
 
