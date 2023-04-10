@@ -230,7 +230,7 @@ def build_model(
     elif config["target"] == 's2':
         task = S2AbsDirectionReconstruction(
             hidden_size=gnn.nb_outputs,
-            target_labels=config["target"],
+            target_labels=config['truth'],
             loss_function=S2AbsCosineLoss(),
             loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['dynedge']['bias'],
@@ -239,7 +239,7 @@ def build_model(
         tasks.append(task)
         task = S2SignDirectionReconstruction(
             hidden_size=gnn.nb_outputs,
-            target_labels=config["target"],
+            target_labels=config['truth'],
             loss_function=S2SignCrossEntropyLoss(),
             loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['dynedge']['bias'],
