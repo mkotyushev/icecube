@@ -60,6 +60,17 @@ def parse_args():
     parser.add_argument('--bn', action='store_true')
     parser.add_argument('--dropout', type=float, required=False, default=None)
     parser.add_argument('--optim', type=str, default='adamw', choices=['sgd', 'adam', 'adamw', 'lion'])
+    parser.add_argument(
+        '--target', 
+        type=str, 
+        default='direction', 
+        choices=[
+            'direction', 
+            'angles_sincos_euclidean', 
+            's2', 
+            'zenith'
+        ]
+    )
     args = parser.parse_args()
     return args
 
@@ -130,8 +141,6 @@ config = {
         "run_name_tag": 'my_example',
         "batch_size": 100,
         "num_workers": 10,
-        # "target": 'zenith',
-        # "target": 'angles_sincos_euclidean',
         "target": 'direction',
         "early_stopping_patience": 5,
         "fit": {
@@ -195,6 +204,8 @@ config = {
 if __name__ == '__main__':
     args = parse_args()
     seed_everything(args.seed)
+
+    config['target'] = args.target
 
     if args.optim == 'sgd':
         config['optimizer_class'] = torch.optim.SGD
