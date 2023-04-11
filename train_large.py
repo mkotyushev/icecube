@@ -207,7 +207,7 @@ if __name__ == '__main__':
     seed_everything(args.seed)
 
     if args.verbose:
-        config['model_kwargs']['log_grad_norm_verbose'] = True
+        config['model_kwargs']['log_norm_verbose'] = True
 
     config['target'] = args.target
 
