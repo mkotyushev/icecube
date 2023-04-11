@@ -68,6 +68,7 @@ def parse_args():
             'direction', 
             'angles_sincos_euclidean', 
             's2', 
+            's2_ce', 
             'zenith'
         ]
     )

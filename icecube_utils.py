@@ -53,6 +53,7 @@ from graphnet.training.loss_functions import (
     VonMisesFisher2DLossSinCos, 
     VonMisesFisher3DLoss,
     S2AbsCosineLoss,
+    S2AbsSoftCrossEntropyLoss, 
     S2SignCrossEntropyLoss
 )
 from graphnet.training.labels import Direction
@@ -366,11 +367,15 @@ def build_model(
                               config["target"] + "_kappa" ]
         additional_attributes = ['zenith', 'azimuth', 'event_id']
         metric_fn = angular_error_task_direction
-    elif config["target"] == 's2':
+    elif config["target"] in ['s2', 's2_ce']:
+        abs_loss_function = \
+            S2AbsCosineLoss() \
+            if config["target"] == 's2' else \
+            S2AbsSoftCrossEntropyLoss()
         task = S2AbsDirectionReconstruction(
             hidden_size=gnn.nb_outputs,
             target_labels='direction',
-            loss_function=S2AbsCosineLoss(),
+            loss_function=abs_loss_function,
             loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['dynedge']['bias'],
             fix_points=fix_points,
