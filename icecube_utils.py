@@ -270,14 +270,14 @@ def angular_error_task_direction(preds: List[Tensor], data: Data) -> Tensor:
     Returns:
         angular error array, shape (N,)
     """
-    true_azimuth, true_zenith = data['azimuth'].cpu().numpy(), data['zenith'].cpu().numpy()
+    true_direction = data['direction'].cpu().numpy()
+    true_x, true_y, true_z = true_direction[:, 0], true_direction[:, 1], true_direction[:, 2]
 
     pred_x = preds[0][:, 0].cpu().numpy()
     pred_y = preds[0][:, 1].cpu().numpy()
     pred_z = preds[0][:, 2].cpu().numpy()
-    pred_azimuth, pred_zenith = xyz_to_angles(pred_x, pred_y, pred_z)
 
-    angular_error = angular_dist_score(true_azimuth, true_zenith, pred_azimuth, pred_zenith)
+    angular_error = np.arccos(np.clip(pred_x * true_x + pred_y * true_y + pred_z * true_z, -1, 1))
     return torch.from_numpy(angular_error)
 
 
@@ -295,21 +295,28 @@ def angular_error_task_s2(preds: List[Tensor], data: Data) -> Tensor:
             preds[1].shape (N, 8) -- (sign class logits)
 
             Sign class:
-                0 -> -1, -1, -1	
-                1 -> -1, -1,  1
-                2 -> -1,  1, -1
-                3 -> -1,  1,  1
-                4 ->  1, -1, -1
-                5 ->  1, -1,  1
-                6 ->  1,  1, -1
-                7 ->  1,  1,  1
+                        sign
+            class ->  x,  y,  z
+                0 -> 0b000 -> -1, -1, -1	
+                1 -> 0b001 -> -1, -1,  1
+                2 -> 0b010 -> -1,  1, -1
+                3 -> 0b011 -> -1,  1,  1
+                4 -> 0b100 ->  1, -1, -1
+                5 -> 0b101 ->  1, -1,  1
+                6 -> 0b110 ->  1,  1, -1
+                7 -> 0b111 ->  1,  1,  1
         
         data: Batch data
     
     Returns:
         angular error array, shape (N,)
     """
-    true_azimuth, true_zenith = data['azimuth'].cpu().numpy(), data['zenith'].cpu().numpy()
+    assert len(preds) == 2
+    assert preds[0].dim() == 2 and preds[0].size()[1] == 3
+    assert preds[1].dim() == 2 and preds[1].size()[1] == 8
+
+    true_direction = data['direction'].cpu().numpy()
+    true_x, true_y, true_z = true_direction[:, 0], true_direction[:, 1], true_direction[:, 2]
 
     pred_x_abs = preds[0][:, 0].cpu().numpy()
     pred_y_abs = preds[0][:, 1].cpu().numpy()
@@ -317,13 +324,11 @@ def angular_error_task_s2(preds: List[Tensor], data: Data) -> Tensor:
 
     pred_sign_class = preds[1].cpu().numpy().argmax(axis=1)
     pred_x, pred_y, pred_z = pred_x_abs, pred_y_abs, pred_z_abs
-    pred_x[pred_sign_class & 0b100] *= -1
-    pred_y[pred_sign_class & 0b010] *= -1
-    pred_z[pred_sign_class & 0b001] *= -1
+    pred_x[~(pred_sign_class & 0b100).astype(bool)] *= -1
+    pred_y[~(pred_sign_class & 0b010).astype(bool)] *= -1
+    pred_z[~(pred_sign_class & 0b001).astype(bool)] *= -1
 
-    pred_azimuth, pred_zenith = xyz_to_angles(pred_x, pred_y, pred_z)
-
-    angular_error = angular_dist_score(true_azimuth, true_zenith, pred_azimuth, pred_zenith)
+    angular_error = np.arccos(np.clip(pred_x * true_x + pred_y * true_y + pred_z * true_z, -1, 1))
     return torch.from_numpy(angular_error)
 
 
@@ -364,7 +369,7 @@ def build_model(
     elif config["target"] == 's2':
         task = S2AbsDirectionReconstruction(
             hidden_size=gnn.nb_outputs,
-            target_labels=config['truth'],
+            target_labels='direction',
             loss_function=S2AbsCosineLoss(),
             loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['dynedge']['bias'],
@@ -373,7 +378,7 @@ def build_model(
         tasks.append(task)
         task = S2SignDirectionReconstruction(
             hidden_size=gnn.nb_outputs,
-            target_labels=config['truth'],
+            target_labels='direction',
             loss_function=S2SignCrossEntropyLoss(),
             loss_weight='loss_weight' if config['loss_weight'] else None,
             bias=config['dynedge']['bias'],
