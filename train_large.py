@@ -5,6 +5,7 @@ import torch
 import random, os
 import numpy as np
 import torch
+import torch_geometric.transforms as T
 from graphnet.data.constants import FEATURES, TRUTH
 from pathlib import Path
 from pytorch_lightning.loggers import WandbLogger
@@ -70,6 +71,15 @@ def parse_args():
             's2', 
             's2_ce', 
             'zenith'
+        ]
+    )
+    parser.add_argument(
+        '--conv', 
+        type=str, 
+        default='dynedge', 
+        choices=[
+            'dynedge', 
+            'gps', 
         ]
     )
     parser.add_argument('--verbose', action='store_true')
@@ -200,8 +210,10 @@ config = {
             'bias': True,
             'bn': True,
             'dropout': None,
+            'gps': False
         },
-        'model_kwargs': {}
+        'model_kwargs': {},
+        'graph_transform': None
 }
 
 
@@ -211,6 +223,14 @@ if __name__ == '__main__':
 
     if args.verbose:
         config['model_kwargs']['log_norm_verbose'] = True
+
+    if args.conv == 'gps':
+        config['graph_transform'] = T.Compose(
+            [
+                T.AddLaplacianEigenvectorPE(walk_length=20, attr_name='pe'),
+            ]
+        )
+        config['dynedge']['gps'] = True
 
     config['target'] = args.target
 

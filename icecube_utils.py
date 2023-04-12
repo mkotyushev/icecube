@@ -690,6 +690,7 @@ def make_dataloaders(config: Dict[str, Any], labels=None) -> List[Any]:
         index_column = config['index_column'],
         truth_table = config['truth_table'],
         transforms = config['train_transforms'],
+        graph_transform = config['graph_transform'],
         **loss_weight_kwargs,
         **max_n_pulses_kwargs,
         **dataset_kwargs
@@ -711,6 +712,7 @@ def make_dataloaders(config: Dict[str, Any], labels=None) -> List[Any]:
         max_n_pulses=config['max_n_pulses']['max_n_pulses'],
         max_n_pulses_strategy="clamp",
         transforms = config['val_transforms'],
+        graph_transform = config['graph_transform'],
     )
     return train_dataloader, validate_dataloader
 
@@ -2310,3 +2312,24 @@ def train_dynedge_simplex(
 @patch('graphnet.models.task.reconstruction.Task.forward', Task_forward)
 def inference_simplex(model, config: Dict[str, Any], use_labels: bool) -> pd.DataFrame:
     return inference(model, config, use_labels)
+
+
+class AddEdgeAttrsFromNodeAttrs(BaseTransform):
+    def __call__(self, data: Data) -> Data:
+        """Add geometrical edge attributes from node attributes.
+        
+        Args:
+            data: A PyTorch Geometric data object.
+        """
+        x, y, z = data.x[:, 0], data.x[:, 1], data.x[:, 2]
+        # Icecube symmetry features:
+        #   - angle to symmetry XY plane
+        k = -1.2334245570477371  # x = k * y, z plane
+
+
+        #   - how parallel to (0, 0, 1) vector: same string
+        #   - is between small and large strings
+
+        # Eucledian distance between sensor positions
+        
+        return data
