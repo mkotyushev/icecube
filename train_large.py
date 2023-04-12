@@ -134,7 +134,7 @@ config = {
             'geometry_path': Path('/workspace/icecube/data/sensor_geometry.csv'),
         },
         "path": '/workspace/icecube/data/fold_0.db',
-        "inference_database_path": '/workspace/icecube/data/fold_0_val.db',
+        "inference_database_path": '/workspace/icecube/data/batch_656_2.db',
 
         # # Pathes for small machine
         # 'parallel_parquet': {
