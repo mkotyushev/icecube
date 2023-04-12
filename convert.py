@@ -8,6 +8,7 @@ import os
 from typing import Any, Dict, List, Optional
 import numpy as np
 
+from graphnet.data.parquet.parallel_parquet_train_dataset import build_geometry_table
 from graphnet.data.sqlite.sqlite_utilities import create_table
 
 
@@ -30,7 +31,10 @@ def load_input(meta_batch: pd.DataFrame, input_data_folder: str, geometry_table:
         assert len(batch_id) == 1, "contains multiple batch_ids. Did you set the batch_size correctly?"
         
         detector_readings = pd.read_parquet(path = f'{input_data_folder}/batch_{batch_id[0]}.parquet')
-        sensor_positions = geometry_table.loc[detector_readings['sensor_id'], ['x', 'y', 'z', 'sensor_type']]
+        sensor_positions = geometry_table.loc[
+            detector_readings['sensor_id'], 
+            ['x', 'y', 'z', 'sensor_type', 'relative_qe']
+        ]
         sensor_positions.index = detector_readings.index
 
         for column in sensor_positions.columns:
@@ -118,24 +122,10 @@ def convert_to_sqlite(meta_data_path: str,
     print(f'Conversion Complete!. Database available at\n {database_path}')
 
 
-def add_sensor_type(geometry):
-    string_id = geometry['sensor_id'] // 60
-    depth_id = geometry['sensor_id'] % 60
-    main_sensor = (string_id < 78)
-    deep_veto = (string_id >= 78) & (depth_id < 10)
-    deep_core = (string_id >= 78) & (depth_id >= 10)
-    geometry['sensor_type'] = 0
-    geometry.loc[main_sensor, 'sensor_type'] = 0
-    geometry.loc[deep_veto, 'sensor_type'] = 1
-    geometry.loc[deep_core, 'sensor_type'] = 2
-    return geometry
-
-
 if __name__ == '__main__':
     args = parse_args()
 
-    geometry = pd.read_csv(args.geometry_table_path)
-    geometry = add_sensor_type(geometry)
+    geometry = build_geometry_table(args.geometry_table_path).to_pandas()
 
     convert_to_sqlite(
         args.meta_data_path,
