@@ -2312,24 +2312,3 @@ def train_dynedge_simplex(
 @patch('graphnet.models.task.reconstruction.Task.forward', Task_forward)
 def inference_simplex(model, config: Dict[str, Any], use_labels: bool) -> pd.DataFrame:
     return inference(model, config, use_labels)
-
-
-class AddEdgeAttrsFromNodeAttrs(BaseTransform):
-    def __call__(self, data: Data) -> Data:
-        """Add geometrical edge attributes from node attributes.
-        
-        Args:
-            data: A PyTorch Geometric data object.
-        """
-        x, y, z = data.x[:, 0], data.x[:, 1], data.x[:, 2]
-        # Icecube symmetry features:
-        #   - angle to symmetry XY plane
-        k = -1.2334245570477371  # x = k * y, z plane
-
-
-        #   - how parallel to (0, 0, 1) vector: same string
-        #   - is between small and large strings
-
-        # Eucledian distance between sensor positions
-        
-        return data
