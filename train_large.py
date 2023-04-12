@@ -5,7 +5,6 @@ import torch
 import random, os
 import numpy as np
 import torch
-import torch_geometric.transforms as T
 from graphnet.data.constants import FEATURES, TRUTH
 from pathlib import Path
 from pytorch_lightning.loggers import WandbLogger
@@ -144,7 +143,7 @@ config = {
         #     'geometry_path': Path('/workspace/icecube/data/dataset/sensor_geometry.csv'),
         # },
         # "path": '/workspace/data2/batch_14.db',
-        # "inference_database_path": '/workspace/data2/batch_656.db',
+        # "inference_database_path": '/workspace/data2/batch_656_2.db',
 
         "pulsemap": 'pulse_table',
         "truth_table": 'meta_table',
@@ -236,14 +235,6 @@ if __name__ == '__main__':
             2 / (1 + task_0_to_1_ratio)
         ]
 
-    if args.conv == 'gps':
-        config['graph_transform'] = T.Compose(
-            [
-                T.AddLaplacianEigenvectorPE(walk_length=20, attr_name='pe'),
-            ]
-        )
-        config['dynedge']['gps'] = True
-
     config['target'] = args.target
 
     if args.optim == 'sgd':
@@ -278,6 +269,19 @@ if __name__ == '__main__':
     config['dynedge']['bn'] = args.bn
     config['dynedge']['dropout'] = args.dropout
     config['max_n_pulses']['max_n_pulses_strategy'] = args.max_n_pulses_strategy
+
+    config['conv'] = args.conv
+    if args.conv == 'gps':
+        config['dynedge']['gps'] = True
+        config['dynedge']['dynedge_layer_sizes'] = [
+            (128, 128), (128, 128), (128, 128), (128, 128)
+        ]
+        config['dynedge']['post_processing_layer_sizes'] = [
+            128, 128
+        ]
+        config['dynedge']['readout_layer_sizes'] = [
+            128
+        ]
 
     # Convert patience from epochs to validation checks
     config['early_stopping_patience'] = int(

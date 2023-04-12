@@ -8,6 +8,7 @@ import torch
 import pandas as pd
 import gc, os
 import numpy as np
+import torch_geometric.transforms as T
 from mock import patch
 from typing import Any, Dict, List, Union, Optional
 from pytorch_lightning.callbacks import (
@@ -343,6 +344,11 @@ def build_model(
     detector = IceCubeKaggle(
         graph_builder=KNNGraphBuilder(nb_nearest_neighbours=8),
     )
+    pe = None
+    if config['conv'] == 'gps':
+        # pe = T.AddLaplacianEigenvectorPE(k=20, attr_name='pe')
+        pe = T.AddRandomWalkPE(walk_length=20, attr_name='pe')
+
     gnn = DynEdge(
         nb_inputs=detector.nb_outputs,
         nb_edge_attrs=detector.nb_edge_attrs,
@@ -593,6 +599,7 @@ def build_model(
     scheduler_kwargs = make_scheduler_kwargs(config, train_dataloader)
     model = StandardModel(
         detector=detector,
+        pe=pe,
         gnn=gnn,
         tasks=tasks,
         tasks_weiths=config["tasks_weights"] if "tasks_weights" in config else None,
