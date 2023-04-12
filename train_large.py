@@ -73,6 +73,7 @@ def parse_args():
             'zenith'
         ]
     )
+    parser.add_argument('--s2-task-0-to-1-ratio', type=float, default=1.0)
     parser.add_argument(
         '--conv', 
         type=str, 
@@ -223,6 +224,17 @@ if __name__ == '__main__':
 
     if args.verbose:
         config['model_kwargs']['log_norm_verbose'] = True
+
+    if args.target.startswith('s2'):
+        # For s2 and s2_ce
+        # - task 0 is abs of direction (cosine loss for s2 and CE for s2_ce)
+        # - task 1 is sign of direction
+        # Given ratio, sum is kept 2.0 as if it was 1:1 ratio
+        task_0_to_1_ratio = args.s2_task_0_to_1_ratio
+        config['tasks_weights'] = [
+            2 * task_0_to_1_ratio / (1 + task_0_to_1_ratio),
+            2 / (1 + task_0_to_1_ratio)
+        ]
 
     if args.conv == 'gps':
         config['graph_transform'] = T.Compose(
