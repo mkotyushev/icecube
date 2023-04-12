@@ -272,16 +272,22 @@ if __name__ == '__main__':
 
     config['conv'] = args.conv
     if args.conv == 'gps':
+        base_gps_hidden_size = 128
+        n_gps_layers = 4
+        gps_heads = 4
+
+        gps_hidden_size = int(base_gps_hidden_size * args.size_multiplier)
         config['dynedge']['gps'] = True
         config['dynedge']['dynedge_layer_sizes'] = [
-            (128, 128), (128, 128), (128, 128), (128, 128)
-        ]
+            (gps_hidden_size, gps_hidden_size)
+        ] * n_gps_layers
         config['dynedge']['post_processing_layer_sizes'] = [
-            128, 128
+            gps_hidden_size, gps_hidden_size
         ]
         config['dynedge']['readout_layer_sizes'] = [
-            128
+            gps_hidden_size
         ]
+        config['dynedge']['gps_heads'] = gps_heads
 
     # Convert patience from epochs to validation checks
     config['early_stopping_patience'] = int(
