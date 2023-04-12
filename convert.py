@@ -17,6 +17,7 @@ def parse_args():
     parser.add_argument('--database_path', type=str, required=True)
     parser.add_argument('--input_data_folder', type=str, required=True)
     parser.add_argument('--geometry_table_path', type=str, required=True)
+    parser.add_argument('--batch_ids', type=int, nargs='*', required=False, default=None)
     return parser.parse_args()
 
 
@@ -29,7 +30,7 @@ def load_input(meta_batch: pd.DataFrame, input_data_folder: str, geometry_table:
         assert len(batch_id) == 1, "contains multiple batch_ids. Did you set the batch_size correctly?"
         
         detector_readings = pd.read_parquet(path = f'{input_data_folder}/batch_{batch_id[0]}.parquet')
-        sensor_positions = geometry_table.loc[detector_readings['sensor_id'], ['x', 'y', 'z']]
+        sensor_positions = geometry_table.loc[detector_readings['sensor_id'], ['x', 'y', 'z', 'sensor_type']]
         sensor_positions.index = detector_readings.index
 
         for column in sensor_positions.columns:
@@ -117,13 +118,31 @@ def convert_to_sqlite(meta_data_path: str,
     print(f'Conversion Complete!. Database available at\n {database_path}')
 
 
+def add_sensor_type(geometry):
+    string_id = geometry['sensor_id'] // 60
+    depth_id = geometry['sensor_id'] % 60
+    main_sensor = (string_id < 78)
+    deep_veto = (string_id >= 78) & (depth_id < 10)
+    deep_core = (string_id >= 78) & (depth_id >= 10)
+    geometry['sensor_type'] = 0
+    geometry.loc[main_sensor, 'sensor_type'] = 0
+    geometry.loc[deep_veto, 'sensor_type'] = 1
+    geometry.loc[deep_core, 'sensor_type'] = 2
+    return geometry
+
+
 if __name__ == '__main__':
     args = parse_args()
+
+    geometry = pd.read_csv(args.geometry_table_path)
+    geometry = add_sensor_type(geometry)
+
     convert_to_sqlite(
         args.meta_data_path,
         database_path=args.database_path,
         input_data_folder=args.input_data_folder,
-        geometry_table=pd.read_csv(args.geometry_table_path)
+        geometry_table=geometry,
+        batch_ids=args.batch_ids,
     )
 
 # [
