@@ -1,5 +1,6 @@
 import argparse
 import math
+import sys
 import pandas as pd
 import torch
 import random, os
@@ -429,7 +430,8 @@ if __name__ == '__main__':
         save_dir='./wandb',
         log_model=False,
     )
-    wandb_logger.experiment.config.update({'args': args}, allow_val_change=True)
+    wandb_logger.experiment.config.update({'args': vars(args)}, allow_val_change=True)
+    wandb_logger.experiment.config.update({'run_command': ' '.join(sys.argv[1:])}, allow_val_change=True)
     wandb_logger.experiment.config.update(config, allow_val_change=True)
     config['fit']['logger'] = wandb_logger
 
