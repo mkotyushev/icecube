@@ -365,7 +365,6 @@ def build_model(
     gnn = DynEdge(
         nb_inputs=detector.nb_outputs,
         nb_edge_attrs=detector.nb_edge_attrs,
-        global_pooling_schemes=["min", "max", "mean"],
         fix_points=fix_points,
         **config['dynedge']
     )

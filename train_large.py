@@ -222,6 +222,7 @@ config = {
             'bn': True,
             'dropout': None,
             'conv': 'dynedge',
+            'global_pooling_schemes': ["min", "max", "mean"],
         },
         'model_kwargs': {},
         'graph_transform': None
