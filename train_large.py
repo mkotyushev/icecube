@@ -428,6 +428,7 @@ if __name__ == '__main__':
         save_dir='./wandb',
         log_model=False,
     )
+    wandb_logger.experiment.config.update({'args': args}, allow_val_change=True)
     wandb_logger.experiment.config.update(config, allow_val_change=True)
     config['fit']['logger'] = wandb_logger
 
