@@ -83,6 +83,16 @@ def parse_args():
             'dyngps', 
         ]
     )
+    parser.add_argument(
+        '--mpnn', 
+        type=str, 
+        default='dynedge', 
+        choices=[
+            'dynedge', 
+            'gine', 
+            'gatedgcn', 
+        ]
+    )
     parser.add_argument('--verbose', action='store_true')
     args = parser.parse_args()
     return args
@@ -269,6 +279,7 @@ if __name__ == '__main__':
 
     config['dynedge']['conv'] = args.conv
     config['dynedge']['conv_params'] = {} if 'conv_params' not in config['dynedge'] else config['dynedge']['conv_params']
+    config['dynedge']['conv_params']['mpnn'] = args.mpnn
     if args.conv == 'dynedge':
         config['dynedge']['conv_params']['dynedge_layer_sizes'] = [
             (int(x * args.size_multiplier), int(y * args.size_multiplier)) 
@@ -277,13 +288,13 @@ if __name__ == '__main__':
     if args.conv == 'gps' or args.conv == 'dyngps':
         base_gps_hidden_size = 128
         gps_hidden_size = int(base_gps_hidden_size * args.size_multiplier)
-        config['dynedge']['conv_params'] = {
+        config['dynedge']['conv_params'].update({
             'n_layers': 4,
             'heads': 4,
             'hidden_size': gps_hidden_size,
             'pe': 'random_walk',
             'pe_output_size': 20,
-        }
+        })
         config['dynedge']['post_processing_layer_sizes'] = [
             gps_hidden_size, gps_hidden_size
         ]
