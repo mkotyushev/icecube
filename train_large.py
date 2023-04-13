@@ -80,6 +80,7 @@ def parse_args():
         choices=[
             'dynedge', 
             'gps', 
+            'dyngps', 
         ]
     )
     parser.add_argument('--verbose', action='store_true')
@@ -210,7 +211,7 @@ config = {
             'bias': True,
             'bn': True,
             'dropout': None,
-            'gps': False
+            'conv': 'dynedge',
         },
         'model_kwargs': {},
         'graph_transform': None
@@ -262,32 +263,33 @@ if __name__ == '__main__':
 
     config['train_mode'] = args.train_mode
     config['batch_size'] = args.batch_size
-    config['dynedge']['dynedge_layer_sizes'] = [
-        (int(x * args.size_multiplier), int(y * args.size_multiplier)) 
-        for x, y in [(128, 256), (336, 256), (336, 256), (336, 256)]
-    ]
     config['dynedge']['bn'] = args.bn
     config['dynedge']['dropout'] = args.dropout
     config['max_n_pulses']['max_n_pulses_strategy'] = args.max_n_pulses_strategy
 
-    config['conv'] = args.conv
-    if args.conv == 'gps':
+    config['dynedge']['conv'] = args.conv
+    config['dynedge']['conv_params'] = {} if 'conv_params' not in config['dynedge'] else config['dynedge']['conv_params']
+    if args.conv == 'dynedge':
+        config['dynedge']['conv_params']['dynedge_layer_sizes'] = [
+            (int(x * args.size_multiplier), int(y * args.size_multiplier)) 
+            for x, y in [(128, 256), (336, 256), (336, 256), (336, 256)]
+        ]
+    if args.conv == 'gps' or args.conv == 'dyngps':
         base_gps_hidden_size = 128
-        n_gps_layers = 4
-        gps_heads = 4
-
         gps_hidden_size = int(base_gps_hidden_size * args.size_multiplier)
-        config['dynedge']['gps'] = True
-        config['dynedge']['dynedge_layer_sizes'] = [
-            (gps_hidden_size, gps_hidden_size)
-        ] * n_gps_layers
+        config['dynedge']['conv_params'] = {
+            'n_layers': 4,
+            'heads': 4,
+            'hidden_size': gps_hidden_size,
+            'pe': 'random_walk',
+            'pe_output_size': 20,
+        }
         config['dynedge']['post_processing_layer_sizes'] = [
             gps_hidden_size, gps_hidden_size
         ]
         config['dynedge']['readout_layer_sizes'] = [
             gps_hidden_size
         ]
-        config['dynedge']['gps_heads'] = gps_heads
 
     # Convert patience from epochs to validation checks
     config['early_stopping_patience'] = int(

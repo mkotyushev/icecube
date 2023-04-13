@@ -345,9 +345,22 @@ def build_model(
         graph_builder=KNNGraphBuilder(nb_nearest_neighbours=8),
     )
     pe = None
-    if config['conv'] == 'gps':
-        # pe = T.AddLaplacianEigenvectorPE(k=20, attr_name='pe')
-        pe = T.AddRandomWalkPE(walk_length=20, attr_name='pe')
+    if config['dynedge']['conv'] == 'gps' or config['dynedge']['conv'] == 'dyngps':
+        if config['dynedge']['conv_params']['pe'] == 'laplacian':
+            pe = T.AddLaplacianEigenvectorPE(
+                k=config['dynedge']['conv_params']['pe_output_size'], 
+                attr_name='pe'
+            )
+        elif config['dynedge']['conv_params']['pe'] == 'random_walk':
+            pe = T.AddRandomWalkPE(
+                walk_length=config['dynedge']['conv_params']['pe_output_size'], 
+                attr_name='pe'
+            )
+        else:
+            raise ValueError(f"Unknown pe type: {config['dynedge']['conv_params']['pe']}")
+        
+    if config['dynedge']['conv'] == 'dyngps':
+        config['dynedge']['conv_params']['detector'] = detector
 
     gnn = DynEdge(
         nb_inputs=detector.nb_outputs,
