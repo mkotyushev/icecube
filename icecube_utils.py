@@ -358,9 +358,6 @@ def build_model(
             )
         else:
             raise ValueError(f"Unknown pe type: {config['dynedge']['conv_params']['pe']}")
-        
-    if config['dynedge']['conv'] == 'dyngps':
-        config['dynedge']['conv_params']['detector'] = detector
 
     gnn = DynEdge(
         nb_inputs=detector.nb_outputs,
