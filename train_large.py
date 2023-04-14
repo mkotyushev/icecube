@@ -29,9 +29,9 @@ from icecube_utils import (
     train_dynedge_simplex,
 )
 
-# example usage:
-# python train_large.py --model-save-dir /weights/test --max-epochs 1 --size-multiplier 1.0 --batch-size 512 --accumulate-grad-batches 1 --seed 0 --weight-loss-by-inverse-n-pulses-log --max-n-pulses-strategy random --mode small --enable-augmentations --lr-onecycle-factors 1e-02 1 1e-02 --lr-schedule-type linear
-def parse_args():
+
+def build_parser():
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--state-dict-path', type=Path, default=None)
     parser.add_argument('--model-save-dir', type=Path, default=None)
@@ -98,7 +98,15 @@ def parse_args():
     parser.add_argument('--gps-n-layers', type=int, default=4)
     parser.add_argument('--gps-heads', type=int, default=4)
     parser.add_argument('--verbose', action='store_true')
-    args = parser.parse_args()
+
+    return parser
+
+
+# example usage:
+# python train_large.py --model-save-dir /weights/test --max-epochs 1 --size-multiplier 1.0 --batch-size 512 --accumulate-grad-batches 1 --seed 0 --weight-loss-by-inverse-n-pulses-log --max-n-pulses-strategy random --mode small --enable-augmentations --lr-onecycle-factors 1e-02 1 1e-02 --lr-schedule-type linear
+def parse_args(args=None):
+    parser = build_parser()
+    args = parser.parse_args(args)
     return args
 
 
@@ -233,10 +241,7 @@ config = {
 }
 
 
-if __name__ == '__main__':
-    args = parse_args()
-    seed_everything(args.seed)
-
+def configure(args):
     if args.verbose:
         config['model_kwargs']['log_norm_verbose'] = True
 
@@ -429,6 +434,22 @@ if __name__ == '__main__':
     config['zero_new_block'] = args.zero_new_block
     config['block_output_aggregation'] = args.block_output_aggregation
 
+    if args.train_mode == 'block':        
+        # Gradient clipping is model kwargs due to manual optimization
+        config['model_kwargs']['gradient_clip_val'] = config['fit']['gradient_clip_val']
+        config['model_kwargs']['gradient_clip_algorithm'] = config['fit']['gradient_clip_algorithm']
+        del config['fit']['gradient_clip_val'], config['fit']['gradient_clip_algorithm']
+    
+        config['fit']['distribution_strategy'] = 'auto'
+
+    return config
+
+
+if __name__ == '__main__':
+    args = parse_args()
+    seed_everything(args.seed)
+    config = configure(args)
+
     wandb_logger = WandbLogger(
         project='icecube',
         save_dir='./wandb',
@@ -453,13 +474,6 @@ if __name__ == '__main__':
     
     if args.train_mode == 'block':
         assert args.n_blocks is not None
-        
-        # Gradient clipping is model kwargs due to manual optimization
-        config['model_kwargs']['gradient_clip_val'] = config['fit']['gradient_clip_val']
-        config['model_kwargs']['gradient_clip_algorithm'] = config['fit']['gradient_clip_algorithm']
-        del config['fit']['gradient_clip_val'], config['fit']['gradient_clip_algorithm']
-    
-        config['fit']['distribution_strategy'] = 'auto'
         model = train_dynedge_blocks(
             config, 
             args.n_blocks, 

@@ -5,12 +5,11 @@ from icecube_utils import (
     inference, 
     load_pretrained_model
 )
-from train_large import config, seed_everything
+from train_large import parse_args as build_parser, configure, seed_everything
 
 
 def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--size_multiplier', type=int, default=1)
+    parser = build_parser()
     parser.add_argument('--test-db-path', type=str, default='/kaggle/working/test_database.db')
     parser.add_argument('--state_dict_path', type=str, default='/kaggle/input/icecube-model/state_dict.pth')
     parser.add_argument('--save-path', type=str, default='/kaggle/working/submission.csv')
@@ -35,24 +34,16 @@ def prepare_dataframe(df, angle_post_fix = '_reco', vec_post_fix = '') -> pd.Dat
 
 def main(args):
     seed_everything(0)
+    config = configure(args)
 
     config['train_mode'] = 'default'
     config['dataset_type'] = 'sqlite'
     config['train_transforms'] = []
-    config['dynedge']['dynedge_layer_sizes'] = [
-        (x * args.size_multiplier, y * args.size_multiplier) 
-        for x, y in [(128, 256), (336, 256), (336, 256), (336, 256)]
-    ]
     config['batch_size'] = args.batch_size
-    config['truth'] = ['zenith', 'azimuth']
-    config['target'] = 'direction'
     config['num_workers'] = args.num_workers
     config['path'] = args.test_db_path
     config['inference_database_path'] = args.test_db_path
     config['fit']['distribution_strategy'] = 'ddp'
-    config['dynedge']['bias'] = True
-    config['dynedge']['bn'] = True
-    config['dynedge']['dropout'] = None
 
     config['max_n_pulses']['max_n_pulses'] = None
     if args.max_n_pulses is not None:
