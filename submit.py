@@ -11,9 +11,7 @@ from train_large import parse_args as build_parser, configure, seed_everything
 def parse_args():
     parser = build_parser()
     parser.add_argument('--test-db-path', type=str, default='/kaggle/working/test_database.db')
-    parser.add_argument('--state_dict_path', type=str, default='/kaggle/input/icecube-model/state_dict.pth')
     parser.add_argument('--save-path', type=str, default='/kaggle/working/submission.csv')
-    parser.add_argument('--batch-size', type=int, default=128)
     parser.add_argument('--num-workers', type=int, default=3)
     parser.add_argument('--max-n-pulses', type=int, default=None)
     return parser.parse_args()
