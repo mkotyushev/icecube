@@ -94,6 +94,9 @@ def parse_args():
             'gatedgcn', 
         ]
     )
+    parser.add_argument('--not-use-edge-attr', action='store_true')
+    parser.add_argument('--gps-n-layers', type=int, default=4)
+    parser.add_argument('--gps-heads', type=int, default=4)
     parser.add_argument('--verbose', action='store_true')
     args = parser.parse_args()
     return args
@@ -282,6 +285,7 @@ if __name__ == '__main__':
     config['dynedge']['conv'] = args.conv
     config['dynedge']['conv_params'] = {} if 'conv_params' not in config['dynedge'] else config['dynedge']['conv_params']
     config['dynedge']['conv_params']['mpnn'] = args.mpnn
+    config['dynedge']['conv_params']['edge_attr'] = not args.not_use_edge_attr
     if args.conv == 'dynedge':
         config['dynedge']['conv_params']['dynedge_layer_sizes'] = [
             (int(x * args.size_multiplier), int(y * args.size_multiplier)) 
@@ -291,8 +295,8 @@ if __name__ == '__main__':
         base_gps_hidden_size = 128
         gps_hidden_size = int(base_gps_hidden_size * args.size_multiplier)
         config['dynedge']['conv_params'].update({
-            'n_layers': 4,
-            'heads': 4,
+            'n_layers': args.gps_n_layers,
+            'heads': args.gps_heads,
             'hidden_size': gps_hidden_size,
             'pe': 'random_walk',
             'pe_output_size': 20,
