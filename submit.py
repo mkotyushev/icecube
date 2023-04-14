@@ -5,7 +5,7 @@ from icecube_utils import (
     inference, 
     load_pretrained_model
 )
-from train_large import parse_args as build_parser, configure, seed_everything
+from train_large import build_parser, configure, seed_everything
 
 
 def parse_args():
@@ -50,7 +50,7 @@ def main(args):
 
     model = load_pretrained_model(
         config=config, 
-        path=args.state_dict_path,
+        path=str(args.state_dict_path),
         return_train_dataloader=False,
     )
     model.additional_attributes = ['event_id']
